@@ -1,0 +1,44 @@
+# Blender Settings — optimized for CPU rendering
+# ================================================
+
+engine: BLENDER_EEVEE
+samples: 64
+resolution: [1280, 720]
+resolution_percentage: 100
+fps: 24
+
+# EEVEE render settings
+eevee:
+  taa_render_samples: 64
+  use_gtao: true
+  gtao_distance: 0.2
+  use_ssr: false
+  use_ssr_refraction: false
+  use_bloom: false
+  use_motion_blur: false
+  shadow_cube_size: 512
+  shadow_cascade_size: 1024
+
+# Cycles fallback (CPU)
+cycles:
+  device: CPU
+  samples: 32
+  use_denoising: true
+  denoiser: OPENIMAGEDENOISE
+  use_adaptive_sampling: true
+  adaptive_threshold: 0.01
+
+# Optimization flags
+optimization:
+  disable_subsurface_scattering: false
+  disable_volumetrics: true
+  max_texture_size: 1024
+  simplify_modifiers: true
+  simplify_subdivision: 1
+
+# Output
+output:
+  format: PNG
+  color_mode: RGBA
+  color_depth: "8"
+  compression: 15

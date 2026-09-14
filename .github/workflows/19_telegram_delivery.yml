@@ -1,0 +1,58 @@
+name: 19 - Telegram Delivery
+
+on:
+  workflow_dispatch:
+
+env:
+  ARTIFACT_DIR: /tmp/pipeline_artifacts
+  METRICS_DIR: /tmp/pipeline_metrics
+  PYTHONPATH: ${{ github.workspace }}
+
+jobs:
+  telegram-delivery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create artifact directories
+        run: mkdir -p $ARTIFACT_DIR $METRICS_DIR
+
+      - name: Download final video
+        uses: actions/download-artifact@v4
+        with:
+          name: pipeline-final-video
+          path: ${{ env.ARTIFACT_DIR }}/output/
+        continue-on-error: true
+
+      - name: Download pipeline artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pipeline-*
+          path: ${{ env.ARTIFACT_DIR }}/
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: Deliver to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+        run: |
+          python -m controller.orchestrator --stage telegram_delivery
+
+      - name: Upload delivery results
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-delivery-results
+          path: /tmp/pipeline_artifacts/
+          retention-days: 7
+        if: always()
