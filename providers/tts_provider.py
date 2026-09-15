@@ -183,8 +183,29 @@ class EspeakProvider(TTSProvider):
 
 
 def get_tts_provider(config: Dict[str, Any]) -> TTSProvider:
-    """Factory: select TTS provider based on configuration."""
-    provider_name = config.get("tts_provider", "google")
+    """Factory: select TTS provider based on configuration.
+
+    TTS_PROVIDER options:
+    - google_cloud → Google Cloud Text-to-Speech (production, needs credentials)
+    - google / gtts → gTTS (free, rate-limited — NOT Google Cloud TTS)
+    - espeak → local espeak fallback
+    """
+    provider_name = config.get("tts_provider", "gtts")
+    if provider_name == "google_cloud":
+        from providers.google_cloud_tts import GoogleCloudTTSProvider
+        provider = GoogleCloudTTSProvider(config)
+        if provider.is_available():
+            return provider
+        # DO NOT silently fall back to gTTS when Cloud TTS was explicitly requested
+        raise RuntimeError(
+            "TTS_PROVIDER=google_cloud but Google Cloud TTS credentials not configured "
+            "(GOOGLE_TTS_API_KEY or GOOGLE_APPLICATION_CREDENTIALS). "
+            "Set credentials or use TTS_PROVIDER=gtts for the free tier."
+        )
+    if provider_name == "gtts":
+        provider = GoogleTTSProvider(config)
+        if provider.is_available():
+            return provider
     if provider_name == "google":
         provider = GoogleTTSProvider(config)
         if provider.is_available():
