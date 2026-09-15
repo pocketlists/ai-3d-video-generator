@@ -1,126 +1,134 @@
-# FILE_MANIFEST.md — Complete File Listing (v2.0)
+# FILE_MANIFEST.md (v3.0)
 
-## Root Files
-- `README.md`
-- `FILE_MANIFEST.md`
-- `REPOSITORY_AUDIT.md`
-- `requirements.txt`
-- `.gitignore`
-- `setup.py`
-- `LICENSE`
+*Regenerated from the actual v3.0 build — status is verified, not claimed.*
 
-## Configuration
-- `config/default.yaml`
-- `config/blender_settings.yaml`
-- `config/secrets_template.env`
+## Status Legend
+- IMPLEMENTED — code complete, locally verified
+- PROVIDER_DEPENDENT — interface complete; requires external credentials/service
+- TEST_ONLY — used exclusively by tests
+- OPTIONAL — fallback/dev convenience only
 
-## Controller (`controller/`)
-- `controller/__init__.py`
-- `controller/config_loader.py`
-- `controller/state_manager.py`
-- `controller/pipeline.py`
-- `controller/orchestrator.py`
-- `controller/hermes.py`
-- `controller/telegram_escalation.py`
+## Root
+| File | Purpose | Status |
+|------|---------|--------|
+| README.md | Honest project overview | IMPLEMENTED |
+| FILE_MANIFEST.md | This file | IMPLEMENTED |
+| REPOSITORY_AUDIT.md | Final audit with measured results | IMPLEMENTED |
+| requirements.txt | Dependencies | IMPLEMENTED |
+| setup.py | Package setup | IMPLEMENTED |
+| LICENSE | MIT license | IMPLEMENTED |
+| .gitignore | Git ignore rules | IMPLEMENTED |
 
-## Providers (`providers/`)
-- `providers/__init__.py`
-- `providers/llm_provider.py`
-- `providers/asset_provider.py`
-- `providers/tts_provider.py`
-- `providers/audio_provider.py`
-- `providers/lip_sync_provider.py`
+## .github/workflows
+| File | Purpose | Status |
+|------|---------|--------|
+| pipeline.yml | **Master pipeline** — all 20 stages as jobs with needs: + artifacts | IMPLEMENTED |
+| resume.yml | **Resume workflow** — external response resume with token validation | IMPLEMENTED |
+| 01-20_*.yml (legacy) | v2.0 per-stage workflows (superseded by pipeline.yml) | OPTIONAL |
 
-## Workers (`workers/`)
-- `workers/__init__.py`
-- `workers/base_worker.py`
-- `workers/planning_worker.py`
-- `workers/script_worker.py`
-- `workers/asset_worker.py`
-- `workers/character_worker.py`
-- `workers/environment_worker.py`
-- `workers/prop_worker.py`
-- `workers/animation_worker.py`
-- `workers/camera_worker.py`
-- `workers/lighting_worker.py`
-- `workers/voice_tts_worker.py`
-- `workers/music_worker.py`
-- `workers/sfx_worker.py`
-- `workers/lip_sync_worker.py`
-- `workers/blender_assembly_worker.py`
-- `workers/render_worker.py`
-- `workers/quality_check_worker.py`
-- `workers/ffmpeg_worker.py`
-- `workers/telegram_worker.py`
-- `workers/optimization_worker.py`
+## core/
+| File | Purpose | Status |
+|------|---------|--------|
+| __init__.py | Package init | IMPLEMENTED |
+| storage.py | State storage abstraction (Local/Artifact/Repository) | IMPLEMENTED |
 
-## Utils (`utils/`)
-- `utils/__init__.py`
-- `utils/logger.py`
-- `utils/telemetry.py`
-- `utils/file_validator.py`
-- `utils/artifact_store.py`
-- `utils/retry.py`
-- `utils/telegram_client.py`
-- `utils/cpu_monitor.py`
-- `utils/asset_validator.py`
+## controller/
+| File | Purpose | Status |
+|------|---------|--------|
+| __init__.py | Package init | IMPLEMENTED |
+| orchestrator.py | Stage runner CLI | IMPLEMENTED |
+| pipeline.py | Stage DAG definition | IMPLEMENTED |
+| config_loader.py | Config loading | IMPLEMENTED |
+| state_manager.py | **State machine with transitions, checkpoints, resume** | IMPLEMENTED |
+| hermes.py | **Agent orchestration — decisions, retry, escalate, resume** | IMPLEMENTED |
+| telegram_escalation.py | **Escalation with resume tokens — no timeout, runner exits** | IMPLEMENTED |
+| checkpoint.py | **Atomic checkpoint system** | IMPLEMENTED |
 
-## Blender (`blender/`)
-- `blender/__init__.py`
-- `blender/low_poly_generator.py`
-- `blender/scene_builder.py`
-- `blender/render_manager.py`
-- `blender/optimization.py`
+## providers/
+| File | Purpose | Status |
+|------|---------|--------|
+| __init__.py | Package init | IMPLEMENTED |
+| llm_provider.py | **Gemini/OpenAI/Template — no silent fallback, style-aware** | IMPLEMENTED (Gemini/OpenAI PROVIDER_DEPENDENT) |
+| asset_provider.py | Generic 3D API provider + cache | IMPLEMENTED (PROVIDER_DEPENDENT) |
+| objaverse_provider.py | **Objaverse-XL retrieval — search/rank/download** | PROVIDER_DEPENDENT |
+| asset_router.py | **Routing: cache → objaverse → external API** | IMPLEMENTED |
+| tts_provider.py | TTS abstraction (gTTS/espeak) | IMPLEMENTED (free tier limits) |
+| audio_provider.py | Music + SFX providers | IMPLEMENTED |
+| lip_sync_provider.py | Lip-sync abstraction | IMPLEMENTED |
 
-## Optimizer (`optimizer/`)
-- `optimizer/__init__.py`
-- `optimizer/metrics_collector.py`
-- `optimizer/analyzer.py`
-- `optimizer/rules.py`
+## workers/ (21 files)
+| File | Purpose | Status |
+|------|---------|--------|
+| base_worker.py | Base class | IMPLEMENTED |
+| planning_worker.py | Planning via LLM provider | IMPLEMENTED |
+| script_worker.py | Script breakdown | IMPLEMENTED |
+| asset_worker.py | Asset collection manifest | IMPLEMENTED |
+| character/environment/prop_worker.py | Asset-based generation with fallback | IMPLEMENTED |
+| animation/camera/lighting_worker.py | Scene components | IMPLEMENTED |
+| voice_tts_worker.py | TTS via provider | IMPLEMENTED |
+| music/sfx_worker.py | Audio generation | IMPLEMENTED |
+| lip_sync_worker.py | Lip sync | IMPLEMENTED |
+| blender_assembly_worker.py | Scene assembly | IMPLEMENTED |
+| render_worker.py | **Rendering with CPU monitoring, per-worker output** | IMPLEMENTED |
+| quality_check_worker.py | QC | IMPLEMENTED |
+| ffmpeg_worker.py | **Final encode — no silent fallback, structured errors** | IMPLEMENTED |
+| telegram_worker.py | Delivery | IMPLEMENTED |
+| optimization_worker.py | Self-optimize | IMPLEMENTED |
 
-## Tests (`tests/`)
-- `tests/__init__.py`
-- `tests/test_config.py`
-- `tests/test_file_validation.py`
-- `tests/test_workflow_logic.py`
-- `tests/test_asset_handling.py`
-- `tests/test_scene_generation.py`
-- `tests/test_render_preparation.py`
-- `tests/test_ffmpeg_assembly.py`
-- `tests/test_telegram_upload.py`
-- `tests/test_optimization.py`
-- `tests/test_failure_recovery.py`
-- `tests/test_providers.py`
-- `tests/test_hermes.py`
+## blender/
+| File | Purpose | Status |
+|------|---------|--------|
+| __init__.py | Package init | IMPLEMENTED |
+| low_poly_generator.py | Procedural meshes | OPTIONAL (smoke test/fallback only) |
+| scene_builder.py | Scene building | IMPLEMENTED |
+| render_manager.py | **Deterministic partitioning, version-aware engine, collector fix** | IMPLEMENTED |
+| optimization.py | Render optimization | IMPLEMENTED |
 
-## Scripts (`scripts/`)
-- `scripts/smoke_test.py`
-- `scripts/install_blender.py`
-- `scripts/validate_repo.py`
+## optimizer/
+| File | Purpose | Status |
+|------|---------|--------|
+| __init__.py, metrics_collector.py, analyzer.py, rules.py | Quality-aware optimization | IMPLEMENTED |
 
-## Documentation (`docs/`)
-- `docs/ARCHITECTURE.md`
-- `docs/SETUP.md`
-- `docs/SECRETS.md`
-- `docs/PIPELINE.md`
+## utils/
+| File | Purpose | Status |
+|------|---------|--------|
+| __init__.py | Package init | IMPLEMENTED |
+| logger.py | Structured logging | IMPLEMENTED |
+| telemetry.py | Telemetry | IMPLEMENTED |
+| file_validator.py | File validation | IMPLEMENTED |
+| artifact_store.py | Artifact tracking | IMPLEMENTED |
+| retry.py | Retry with backoff | IMPLEMENTED |
+| telegram_client.py | Telegram client | IMPLEMENTED |
+| cpu_monitor.py | **Real CPU/RAM measurements** | IMPLEMENTED |
+| asset_validator.py | GLB/GLTF/FBX/OBJ validation | IMPLEMENTED |
+| error_classifier.py | **Error classification for retry/escalation** | IMPLEMENTED |
 
-## GitHub Actions Workflows (`.github/workflows/`)
-- `.github/workflows/01_receive_request.yml` through `20_self_optimize.yml`
+## tests/
+| File | Purpose | Status |
+|------|---------|--------|
+| mocks.py | **Mock providers — no paid APIs needed** | TEST_ONLY |
+| test_v3.py | **v3.0 regression tests (35+ tests)** | TEST_ONLY |
+| test_providers.py | Provider tests | TEST_ONLY |
+| test_hermes.py | Hermes/escalation tests | TEST_ONLY |
+| test_config.py, test_file_validation.py, etc. | v2.0 tests (preserved) | TEST_ONLY |
 
-## Summary
+## scripts/
+| File | Purpose | Status |
+|------|---------|--------|
+| smoke_test.py | **10-check end-to-end smoke test** | IMPLEMENTED |
+| validate_repo.py | **Deep validation — syntax/YAML/secrets/imports/TODO** | IMPLEMENTED |
+| install_blender.py | Blender installer | IMPLEMENTED |
 
-| Category | Count |
-|----------|-------|
-| Root files | 7 |
-| Config files | 3 |
-| Controller modules | 7 |
-| Provider modules | 6 |
-| Worker modules | 21 |
-| Utils modules | 9 |
-| Blender modules | 5 |
-| Optimizer modules | 4 |
-| Test files | 13 |
-| Scripts | 3 |
-| Documentation | 4 |
-| GitHub Actions workflows | 20 |
-| **Total** | **102** |
+## config/
+| File | Purpose | Status |
+|------|---------|--------|
+| default.yaml | **v3.0 config — no secrets, quality classes, profiles** | IMPLEMENTED |
+| blender_settings.yaml | Blender settings | IMPLEMENTED |
+| secrets_template.env | **Updated template with all v3.0 vars** | IMPLEMENTED |
+
+## docs/
+| File | Purpose | Status |
+|------|---------|--------|
+| INITIAL_AUDIT.md | **v2.0 bugs found before v3.0 (PHASE 0)** | IMPLEMENTED |
+| FAILURE_MATRIX.md | **Every failure: detection/retry/escalation/resume** | IMPLEMENTED |
+| ARCHITECTURE.md, SETUP.md, SECRETS.md, PIPELINE.md | Existing docs (preserved) | IMPLEMENTED |
