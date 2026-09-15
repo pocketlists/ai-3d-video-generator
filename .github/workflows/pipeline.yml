@@ -1,0 +1,469 @@
+name: AI Video Pipeline (Master)
+
+on:
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: 'Video generation prompt'
+        required: true
+        default: 'A serene landscape at sunrise'
+      style:
+        description: 'Visual style (anime, cinematic, realistic, stylized, fantasy, low-poly)'
+        required: false
+        default: 'low-poly'
+      num_workers:
+        description: 'Number of render workers (1-20)'
+        required: false
+        default: '4'
+      quality:
+        description: 'Quality profile (draft, standard, high, ultra)'
+        required: false
+        default: 'standard'
+
+env:
+  ARTIFACT_DIR: /tmp/pipeline_artifacts
+  METRICS_DIR: /tmp/pipeline_metrics
+  STATE_DIR: /tmp/pipeline_state
+  LOG_DIR: /tmp/pipeline_logs
+  PYTHONPATH: ${{ github.workspace }}
+
+jobs:
+  # ── STAGE 1: RECEIVE ──
+  receive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR $METRICS_DIR $STATE_DIR $LOG_DIR
+      - name: Receive request
+        env:
+          PROMPT: ${{ github.event.inputs.prompt }}
+          STYLE: ${{ github.event.inputs.style }}
+        run: |
+          python -c "
+          import json, os, uuid, time
+          job_id = 'job_' + time.strftime('%Y%m%d_%H%M%S') + '_' + uuid.uuid4().hex[:6]
+          data = {'job_id': job_id, 'prompt': os.environ['PROMPT'], 'style': os.environ['STYLE'],
+                  'created_at': time.time(), 'status': 'RECEIVED'}
+          with open(os.environ['ARTIFACT_DIR'] + '/request.json', 'w') as f:
+              json.dump(data, f, indent=2)
+          print(f'Job ID: {job_id}')
+          "
+      - uses: actions/upload-artifact@v4
+        with: 
+
+  # ── STAGE 2: PLANNING ──
+  planning:
+    needs: receive
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR $METRICS_DIR
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-request
+          path: ${{ env.ARTIFACT_DIR }}
+      - name: Run AI planning
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'template' }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.0-flash' }}
+        run: python -m controller.orchestrator --stage ai_planning
+      - uses: actions/upload-artifact@v4
+        with: 
+
+  # ── STAGE 3: SCRIPT BREAKDOWN ──
+  script:
+    needs: planning
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR $METRICS_DIR
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-plan
+          path: ${{ env.ARTIFACT_DIR }}
+      - run: python -m controller.orchestrator --stage script_breakdown
+      - uses: actions/upload-artifact@v4
+        with: 
+
+  # ── STAGE 4: ASSET COLLECTION ──
+  assets:
+    needs: script
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR $METRICS_DIR
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-script
+          path: ${{ env.ARTIFACT_DIR }}
+      - run: python -m controller.orchestrator --stage asset_collection
+      - uses: actions/upload-artifact@v4
+        with: 
+
+  # ── STAGES 5-7: CHARACTERS, ENVIRONMENTS, PROPS (parallel) ──
+  characters:
+    needs: script
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR $METRICS_DIR
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-script
+          path: ${{ env.ARTIFACT_DIR }}
+      - env:
+          THREE_D_ASSET_API_KEY: ${{ secrets.THREE_D_ASSET_API_KEY }}
+          THREE_D_ASSET_API_URL: ${{ secrets.THREE_D_ASSET_API_URL }}
+        run: python -m controller.orchestrator --stage characters
+      - uses: actions/upload-artifact@v4
+        with: 
+
+  environments:
+    needs: script
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR $METRICS_DIR
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-script
+          path: ${{ env.ARTIFACT_DIR }}
+      - env:
+          THREE_D_ASSET_API_KEY: ${{ secrets.THREE_D_ASSET_API_KEY }}
+          THREE_D_ASSET_API_URL: ${{ secrets.THREE_D_ASSET_API_URL }}
+        run: python -m controller.orchestrator --stage environments
+      - uses: actions/upload-artifact@v4
+        with: 
+
+  props:
+    needs: script
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR $METRICS_DIR
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-script
+          path: ${{ env.ARTIFACT_DIR }}
+      - env:
+          THREE_D_ASSET_API_KEY: ${{ secrets.THREE_D_ASSET_API_KEY }}
+          THREE_D_ASSET_API_URL: ${{ secrets.THREE_D_ASSET_API_URL }}
+        run: python -m controller.orchestrator --stage props
+      - uses: actions/upload-artifact@v4
+        with: 
+
+  # ── STAGES 11-13: VOICE, MUSIC, SFX (parallel with assets) ──
+  voice_tts:
+    needs: script
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR $METRICS_DIR
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-script
+          path: ${{ env.ARTIFACT_DIR }}
+      - env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          TTS_PROVIDER: ${{ vars.TTS_PROVIDER || 'google' }}
+        run: python -m controller.orchestrator --stage voice_tts
+      - uses: actions/upload-artifact@v4
+        with: 
+
+  music:
+    needs: script
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-script
+          path: ${{ env.ARTIFACT_DIR }}
+      - run: python -m controller.orchestrator --stage music
+      - uses: actions/upload-artifact@v4
+        with: 
+
+  sfx:
+    needs: script
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-script
+          path: ${{ env.ARTIFACT_DIR }}
+      - run: python -m controller.orchestrator --stage sfx
+      - uses: actions/upload-artifact@v4
+        with: 
+
+  # ── STAGE 8: ANIMATION (needs characters+env+props) ──
+  animation:
+    needs: [characters, environments, props]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-characters
+          path: ${{ env.ARTIFACT_DIR }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-environments
+          path: ${{ env.ARTIFACT_DIR }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-props
+          path: ${{ env.ARTIFACT_DIR }}
+      - run: python -m controller.orchestrator --stage animation
+      - uses: actions/upload-artifact@v4
+        with: 
+
+  # ── STAGE 9: CAMERA ──
+  camera:
+    needs: environments
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-environments
+          path: ${{ env.ARTIFACT_DIR }}
+      - run: python -m controller.orchestrator --stage camera
+      - uses: actions/upload-artifact@v4
+        with: 
+
+  # ── STAGE 10: LIGHTING ──
+  lighting:
+    needs: environments
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-environments
+          path: ${{ env.ARTIFACT_DIR }}
+      - run: python -m controller.orchestrator --stage lighting
+      - uses: actions/upload-artifact@v4
+        with: 
+
+  # ── STAGE 14: LIP SYNC ──
+  lip_sync:
+    needs: [voice_tts, characters]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-voice
+          path: ${{ env.ARTIFACT_DIR }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-characters
+          path: ${{ env.ARTIFACT_DIR }}
+      - run: python -m controller.orchestrator --stage lip_sync
+      - uses: actions/upload-artifact@v4
+        with: 
+
+  # ── STAGE 15: BLENDER ASSEMBLY ──
+  assembly:
+    needs: [animation, camera, lighting, lip_sync]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-animation
+          path: ${{ env.ARTIFACT_DIR }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-camera
+          path: ${{ env.ARTIFACT_DIR }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-lighting
+          path: ${{ env.ARTIFACT_DIR }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-lipsync
+          path: ${{ env.ARTIFACT_DIR }}
+      - run: python -m controller.orchestrator --stage blender_assembly
+      - uses: actions/upload-artifact@v4
+        with: 
+
+  # ── STAGE 16: RENDER (parallel matrix) ──
+  render:
+    needs: assembly
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        worker_id: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-assembly
+          path: ${{ env.ARTIFACT_DIR }}
+      - name: Install Blender
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq blender xvfb libgl1-mesa-glx libegl1 libglx-mesa0 2>/dev/null || true
+      - name: Render (Worker ${{ matrix.worker_id }})
+        env:
+          WORKER_ID: ${{ matrix.worker_id }}
+          NUM_WORKERS: ${{ github.event.inputs.num_workers || 4 }}
+          TOTAL_FRAMES: 1440
+          RENDER_ENGINE: BLENDER_EEVEE
+        run: |
+          export FRAME_START=$((WORKER_ID * TOTAL_FRAMES / NUM_WORKERS + 1))
+          export FRAME_END=$(((WORKER_ID + 1) * TOTAL_FRAMES / NUM_WORKERS))
+          python -m controller.orchestrator --stage render_workers
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pipeline-render-${{ matrix.worker_id }}
+          path: /tmp/pipeline_artifacts/renders/worker_${{ matrix.worker_id }}/
+          retention-days: 7
+
+  # ── STAGE 17: QUALITY CHECK ──
+  quality:
+    needs: render
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: 
+          merge-multiple: true
+      - run: python -m controller.orchestrator --stage quality_check
+      - uses: actions/upload-artifact@v4
+        with: 
+
+  # ── STAGE 18: FFMPEG ASSEMBLY ──
+  ffmpeg:
+    needs: [quality, voice_tts, music, sfx]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: |
+          pip install -r requirements.txt
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          mkdir -p $ARTIFACT_DIR
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-quality
+          path: ${{ env.ARTIFACT_DIR }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-voice
+          path: ${{ env.ARTIFACT_DIR }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-music
+          path: ${{ env.ARTIFACT_DIR }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-sfx
+          path: ${{ env.ARTIFACT_DIR }}
+      - run: python -m controller.orchestrator --stage ffmpeg_assembly
+      - uses: actions/upload-artifact@v4
+        with: 
+
+  # ── STAGE 19: TELEGRAM DELIVERY ──
+  delivery:
+    needs: ffmpeg
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR
+      - uses: actions/download-artifact@v4
+        with:
+          name: 
+      - env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+        run: python -m controller.orchestrator --stage telegram_delivery
+
+  # ── STAGE 20: SELF-OPTIMIZE ──
+  optimize:
+    needs: ffmpeg
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR $METRICS_DIR
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-quality
+          path: ${{ env.ARTIFACT_DIR }}
+      - run: python -m controller.orchestrator --stage self_optimize
+      - uses: actions/upload-artifact@v4
+        with: 
