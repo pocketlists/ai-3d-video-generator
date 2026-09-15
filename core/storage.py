@@ -170,6 +170,105 @@ class GitHubRepositoryStateStore(StateStore):
         return [f.stem for f in local_path.glob("*.json") if f.is_file()]
 
 
+
+class GitHubContentsStateStore(StateStore):
+    """
+    Persistent state via GitHub Contents API (gh api /repos/.../contents/).
+
+    This is a REAL cross-runner persistence mechanism — state JSON is committed
+    to a 'pipeline-state' branch (or the default branch under state/ prefix),
+    not just written to local /tmp.
+
+    Requires: GITHUB_TOKEN env var (set automatically in GitHub Actions).
+    Uses: gh CLI (subprocess) — available in GitHub Actions runners.
+    """
+    def __init__(self, owner: str = "", repo: str = "", branch: str = "pipeline-state"):
+        self.owner = owner or os.environ.get("GITHUB_REPOSITORY_OWNER", "")
+        repo_full = os.environ.get("GITHUB_REPOSITORY", "")
+        self.repo = repo or (repo_full.split("/")[-1] if repo_full else "")
+        self.branch = branch
+        self._local_fallback = None  # lazy-init LocalStateStore for tests
+
+    def _gh_available(self) -> bool:
+        """Check if gh CLI + GITHUB_TOKEN are available."""
+        import shutil, subprocess
+        if not shutil.which("gh"):
+            return False
+        # gh uses GITHUB_TOKEN from env (GH_TOKEN also works)
+        return bool(os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN"))
+
+    def save_state(self, job_id: str, state: Dict[str, Any]) -> str:
+        import subprocess, base64
+        if not self._gh_available():
+            # Local fallback for tests — mark clearly that this is NOT GitHub-persistent
+            if self._local_fallback is None:
+                self._local_fallback = LocalStateStore()
+            path = self._local_fallback.save_state(job_id, state)
+            return f"{path} (WARNING: local-only — gh CLI or GITHUB_TOKEN not available)"
+
+        content_json = json.dumps(state, indent=2)
+        content_b64 = base64.b64encode(content_json.encode()).decode()
+        path = f"state/{job_id}.json"
+
+        # gh api PUT /repos/{owner}/{repo}/contents/{path}
+        result = subprocess.run([
+            "gh", "api", f"/repos/{self.owner}/{self.repo}/contents/{path}",
+            "-X", "PUT",
+            "-f", f"message=checkpoint: {job_id}",
+            "-f", f"content={content_b64}",
+            "-f", f"branch={self.branch}",
+        ], capture_output=True, text=True, timeout=30)
+
+        if result.returncode != 0:
+            # Fallback to local if branch doesn't exist or API fails
+            if self._local_fallback is None:
+                self._local_fallback = LocalStateStore()
+            return self._local_fallback.save_state(job_id, state) + " (fallback: gh API failed)"
+        return f"github:contents:{path}@{self.branch}"
+
+    def load_state(self, job_id: str) -> Optional[Dict[str, Any]]:
+        import subprocess, base64
+        # Try local first (faster, may have been written by fallback)
+        if self._local_fallback:
+            loaded = self._local_fallback.load_state(job_id)
+            if loaded:
+                return loaded
+
+        if not self._gh_available():
+            return None
+
+        path = f"state/{job_id}.json"
+        result = subprocess.run([
+            "gh", "api", f"/repos/{self.owner}/{self.repo}/contents/{path}",
+            "-H", f"Accept: application/vnd.github.raw",
+        ], capture_output=True, text=True, timeout=30)
+
+        if result.returncode != 0:
+            return None
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return None
+
+    def list_jobs(self) -> list:
+        import subprocess
+        if not self._gh_available():
+            if self._local_fallback:
+                return self._local_fallback.list_jobs()
+            return []
+        result = subprocess.run([
+            "gh", "api", f"/repos/{self.owner}/{self.repo}/contents/state",
+            "-H", f"Accept: application/vnd.github+json",
+        ], capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            return []
+        try:
+            items = json.loads(result.stdout)
+            return [i["name"].replace(".json", "") for i in items if i.get("name", "").endswith(".json")]
+        except (json.JSONDecodeError, KeyError):
+            return []
+
+
 def get_state_store(config: Optional[Dict] = None) -> StateStore:
     """Factory: select state store based on configuration."""
     config = config or {}
@@ -178,4 +277,6 @@ def get_state_store(config: Optional[Dict] = None) -> StateStore:
         return GitHubArtifactStateStore()
     elif backend == "repository":
         return GitHubRepositoryStateStore()
+    elif backend == "contents":
+        return GitHubContentsStateStore()
     return LocalStateStore()
