@@ -4,10 +4,26 @@
 # Pipeline settings
 pipeline:
   name: "ai-3d-video-generator"
-  version: "1.0.0"
+  version: "2.0.0"
   target_duration_sec: 60
   fps: 24
   total_frames: 1440
+
+# LLM provider (gemini, openai, template)
+llm_provider: template
+gemini_model: gemini-1.5-flash
+openai_model: gpt-4o-mini
+
+# 3D Asset API
+three_d_asset_api_key: ""
+three_d_asset_api_url: ""
+asset_api_timeout: 300
+asset_cache_dir: assets
+
+# TTS provider (google, espeak)
+tts_provider: google
+tts_mode: free
+tts_language: en
 
 # Video settings
 video:
@@ -21,7 +37,8 @@ video:
 render:
   engine: BLENDER_EEVEE
   samples: 64
-  workers: 4
+  max_workers: 20
+  default_workers: 4
   resolution: [1280, 720]
   output_format: PNG
 
@@ -32,13 +49,22 @@ audio:
   voice_volume: 0.8
   music_volume: 0.3
   sfx_volume: 0.4
+  music_ducking: true
+  normalization: true
 
-# Telegram settings (values come from environment/secrets)
+# Telegram settings
 telegram:
   enabled: true
   send_progress: true
   send_assets: true
   send_final_video: true
+  send_error_reports: true
+
+# Escalation settings
+escalation:
+  enabled: true
+  timeout: 300
+  poll_interval: 10
 
 # Optimization settings
 optimization:
@@ -55,9 +81,12 @@ failure_recovery:
   retry_delay_sec: 5
   continue_on_partial_failure: true
   validate_before_dependency: true
+  escalate_to_telegram: true
 
 # Asset limits
 assets:
   max_texture_size: 1024
   max_vertices_per_object: 500
   max_total_objects: 50
+  validate_before_assembly: true
+  cache_enabled: true
