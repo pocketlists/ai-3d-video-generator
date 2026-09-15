@@ -68,7 +68,21 @@ class RenderWorker(BaseWorker):
             }
         else:
             # Placeholder frames for pipeline testing
-            self.logger.warning(f"Worker {worker_id}: no blend file, generating placeholder frames")
+            # PHASE 38: Placeholder frames are allowed ONLY in PIPELINE_MODE=test.
+            # In production, a missing Blender scene MUST fail the job.
+            import os as _os
+            pipeline_mode = _os.environ.get("PIPELINE_MODE", "production").lower()
+            if pipeline_mode == "production":
+                self.logger.error(
+                    f"Worker {worker_id}: BLENDER SCENE MISSING in PIPELINE_MODE=production — "
+                    f"FAILING (no placeholder frames allowed)"
+                )
+                raise RuntimeError(
+                    f"Worker {worker_id}: blend file not found and PIPELINE_MODE=production — "
+                    f"placeholder frames are NOT allowed in production. "
+                    f"Fix the blender_assembly stage or set PIPELINE_MODE=test."
+                )
+            self.logger.warning(f"Worker {worker_id}: no blend file, generating placeholder frames (PIPELINE_MODE={pipeline_mode})")
             frames = self._generate_placeholder_frames(
                 output_dir, frame_start, frame_end,
                 int(resolution[0]), int(resolution[1]), monitor
