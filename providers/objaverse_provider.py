@@ -29,6 +29,7 @@ from providers.asset_provider import ThreeDAssetProvider, CachedAsset
 
 
 class ObjaverseProvider(ThreeDAssetProvider):
+    
     """
     Objaverse-XL asset retrieval provider.
 
