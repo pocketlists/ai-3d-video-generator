@@ -23,6 +23,7 @@ def test_telegram_escalation_enabled_with_config():
 
 def test_state_manager_resumable(tmp_path):
     sm = StateManager(run_id="test_resume", state_dir=str(tmp_path))
+    sm.set_stage_status("receive_request", "completed")
     sm.set_stage_status("ai_planning", "completed")
     sm.set_stage_status("script_breakdown", "completed")
     sm.set_stage_status("asset_collection", "running")
