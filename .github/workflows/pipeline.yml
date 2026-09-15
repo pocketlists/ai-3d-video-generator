@@ -1,5 +1,4 @@
 name: AI Video Pipeline (Master)
-
 on:
   workflow_dispatch:
     inputs:
@@ -42,7 +41,7 @@ jobs:
           PROMPT: ${{ github.event.inputs.prompt }}
           STYLE: ${{ github.event.inputs.style }}
         run: |
-          python -c "
+          python -c """
           import json, os, uuid, time
           job_id = 'job_' + time.strftime('%Y%m%d_%H%M%S') + '_' + uuid.uuid4().hex[:6]
           data = {'job_id': job_id, 'prompt': os.environ['PROMPT'], 'style': os.environ['STYLE'],
@@ -50,7 +49,7 @@ jobs:
           with open(os.environ['ARTIFACT_DIR'] + '/request.json', 'w') as f:
               json.dump(data, f, indent=2)
           print(f'Job ID: {job_id}')
-          "
+          """
       - uses: actions/upload-artifact@v4
         with: 
 
@@ -90,7 +89,7 @@ jobs:
       - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR $METRICS_DIR
       - uses: actions/download-artifact@v4
         with:
-          name: pipeline-plan
+          name: pipeline-script
           path: ${{ env.ARTIFACT_DIR }}
       - run: python -m controller.orchestrator --stage script_breakdown
       - uses: actions/upload-artifact@v4
