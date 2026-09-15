@@ -352,12 +352,28 @@ class RenderManager:
         found = set(frame_map.keys())
         missing = sorted(all_expected - found)
 
+        # PHASE 36: compute per-frame checksums for render_manifest.json
+        frame_checksums = {}
+        for frame_num, rel_path in frame_map.items():
+            frame_num_str = str(frame_num)
+            abs_path = renders / rel_path
+            try:
+                import hashlib as _hashlib
+                h = _hashlib.sha256()
+                with open(abs_path, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(65536), b""):
+                        h.update(chunk)
+                frame_checksums[frame_num_str] = h.hexdigest()[:16]
+            except OSError:
+                frame_checksums[frame_num_str] = "UNREADABLE"
+
         manifest = {
             "job_id": job_id,
             "total_frames": total_frames,
             "workers": len(worker_dirs),
             "frames_found": len(frame_map),
             "frames": {str(k): v for k, v in sorted(frame_map.items())},
+            "checksums": frame_checksums,
             "worker_ranges": worker_ranges,
             "duplicates": duplicates,
             "missing_frames": missing,
