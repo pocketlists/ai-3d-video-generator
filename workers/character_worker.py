@@ -1,15 +1,17 @@
 """
-Character worker — generates low-poly character meshes.
+Character worker — uses 3D Asset API to generate real character models.
 
-Stage 5: Creates character meshes using the low-poly generator,
-saves them as mesh data JSON for the Blender assembly stage.
+Stage 5: Generates character meshes via the configured 3D asset provider.
+Falls back to low_poly_generator if no API is configured.
+Caches assets for reuse across scenes.
 """
 import json
 import os
 from typing import Any, Dict
 
 from workers.base_worker import BaseWorker
-from blender.low_poly_generator import LowPolyGenerator
+from providers.asset_provider import get_asset_provider
+from utils.asset_validator import AssetValidator
 
 
 class CharacterWorker(BaseWorker):
@@ -20,24 +22,64 @@ class CharacterWorker(BaseWorker):
         if not manifest:
             return {"status": "error", "error": "No asset manifest found"}
 
-        generator = LowPolyGenerator(seed=42)
+        asset_provider = get_asset_provider(self.config)
+        validator = AssetValidator()
         characters = []
+
         for char_spec in manifest.get("characters", []):
-            mesh = generator.generate_character(char_spec["name"])
-            char_data = {
-                "name": char_spec["name"],
-                "mesh": mesh.to_dict(),
-                "vertex_count": mesh.vertex_count(),
-                "face_count": mesh.face_count(),
-            }
+            name = char_spec["name"]
+            prompt = char_spec.get("prompt", f"low-poly character: {name}")
+
+            # Try 3D asset API first
+            asset = asset_provider.get_or_create(prompt, "characters", name)
+
+            if asset and os.path.exists(asset.file_path):
+                # Validate the downloaded asset
+                validation = validator.validate(asset.file_path)
+                if validation["valid"]:
+                    char_data = {
+                        "name": name,
+                        "asset_id": asset.asset_id,
+                        "file_path": asset.file_path,
+                        "format": asset.format,
+                        "mesh_count": validation["mesh_count"],
+                        "polygon_count": validation["polygon_count"],
+                        "rig_status": "rigged" if validation["rig_present"] else "static",
+                        "texture_status": "textured" if validation["texture_count"] > 0 else "untextured",
+                        "source": "3d_api",
+                        "cached": True,
+                    }
+                    self.logger.info(f"Character generated via 3D API: {name} "
+                                   f"({validation['mesh_count']} meshes, {validation['polygon_count']} polys)")
+                else:
+                    self.logger.warning(f"Asset validation failed for {name}: {validation['issues']}")
+                    char_data = self._use_fallback(name)
+            else:
+                self.logger.info(f"3D API not available, using fallback for: {name}")
+                char_data = self._use_fallback(name)
+
             characters.append(char_data)
-            self.logger.info(f"Generated character: {char_spec['name']} ({mesh.vertex_count()} verts)")
 
         path = self._save_characters(characters)
         return {
             "status": "success",
             "characters_path": path,
             "character_count": len(characters),
+            "api_used": any(c.get("source") == "3d_api" for c in characters),
+        }
+
+    def _use_fallback(self, name: str) -> Dict:
+        """Fallback to low_poly_generator when 3D API is unavailable."""
+        from blender.low_poly_generator import LowPolyGenerator
+        gen = LowPolyGenerator(seed=42)
+        mesh = gen.generate_character(name)
+        return {
+            "name": name,
+            "mesh": mesh.to_dict(),
+            "vertex_count": mesh.vertex_count(),
+            "face_count": mesh.face_count(),
+            "source": "fallback_low_poly",
+            "cached": False,
         }
 
     def _load_manifest(self) -> Dict:
