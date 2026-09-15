@@ -1,29 +1,53 @@
-# AI 3D Video Generator — Default Configuration
-# ===============================================
+# AI 3D Video Generator — Default Configuration (v3.0)
+# Secrets MUST be in environment variables or GitHub Secrets, NOT here.
 
 # Pipeline settings
 pipeline:
   name: "ai-3d-video-generator"
-  version: "2.0.0"
+  version: "3.0.0"
   target_duration_sec: 60
   fps: 24
   total_frames: 1440
 
-# LLM provider (gemini, openai, template)
+# LLM Provider (gemini, openai, template)
+# DO NOT silently fallback to template if gemini fails — escalate instead
 llm_provider: template
-gemini_model: gemini-1.5-flash
+gemini_model: gemini-2.0-flash
 openai_model: gpt-4o-mini
+allow_template_fallback: false
 
-# 3D Asset API
-three_d_asset_api_key: ""
+# Asset Provider
+asset_provider: objaverse
+objaverse_enabled: false
 three_d_asset_api_url: ""
-asset_api_timeout: 300
 asset_cache_dir: assets
+asset_routing_order:
+  - cache
+  - objaverse
+  - external_api
 
-# TTS provider (google, espeak)
-tts_provider: google
+# Asset quality classes (PHASE 21)
+asset_quality_classes:
+  background:
+    max_vertices: 500
+  prop_low:
+    max_vertices: 1000
+  prop_medium:
+    max_vertices: 3000
+  character:
+    max_vertices: 10000
+  hero_character:
+    max_vertices: 50000
+  hero_closeup:
+    max_vertices: 100000
+
+# TTS Provider (google, gtts, elevenlabs)
+tts_provider: gtts
 tts_mode: free
 tts_language: en
+tts_voice: ""
+tts_speaking_rate: 1.0
+tts_pitch: 0.0
 
 # Video settings
 video:
@@ -41,6 +65,25 @@ render:
   default_workers: 4
   resolution: [1280, 720]
   output_format: PNG
+
+# Quality profiles (PHASE 68)
+quality_profiles:
+  draft:
+    samples: 32
+    resolution: [960, 540]
+    render_engine: BLENDER_EEVEE
+  standard:
+    samples: 64
+    resolution: [1280, 720]
+    render_engine: BLENDER_EEVEE
+  high:
+    samples: 128
+    resolution: [1920, 1080]
+    render_engine: BLENDER_EEVEE
+  ultra:
+    samples: 256
+    resolution: [1920, 1080]
+    render_engine: CYCLES
 
 # Audio settings
 audio:
@@ -60,18 +103,19 @@ telegram:
   send_final_video: true
   send_error_reports: true
 
-# Escalation settings
+# Escalation settings — NO timeout for human intervention
 escalation:
   enabled: true
-  timeout: 300
-  poll_interval: 10
+  # No timeout — runner exits and resume happens via new workflow
+  exit_runner_on_escalation: true
+
+# State persistence
+state_backend: local  # local, artifact, repository
 
 # Optimization settings
 optimization:
   enabled: true
-  min_samples: 32
-  min_resolution: [960, 540]
-  min_fps: 24
+  min_quality_score: 85
   learn_from_history: true
   history_limit: 20
 
@@ -83,10 +127,5 @@ failure_recovery:
   validate_before_dependency: true
   escalate_to_telegram: true
 
-# Asset limits
-assets:
-  max_texture_size: 1024
-  max_vertices_per_object: 500
-  max_total_objects: 50
-  validate_before_assembly: true
-  cache_enabled: true
+# Security
+telegram_allowed_user_ids: ""
