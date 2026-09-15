@@ -105,7 +105,7 @@ class GeminiProvider(LLMProvider):
             "- total_frames: number (1440)\n"
             "- scenes: array of objects with id, name, duration_sec, description, "
             "camera (type, location, target), characters (name, prompt, position), "
-            "environment (type, prompt), props (name, type, prompt, position), narration\n\n"
+            "environment (type, prompt), props (name, type, prompt, position), narration\n"
             f"Visual style: {style}\n"
             "Keep suitable for CPU rendering."
         )
@@ -255,20 +255,31 @@ def get_llm_provider(config: Dict[str, Any]) -> LLMProvider:
     provider_name = config.get("llm_provider") or os.environ.get("LLM_PROVIDER", "template")
     allow_fallback = config.get("allow_template_fallback", False) or os.environ.get("ALLOW_TEMPLATE_FALLBACK", "false").lower() == "true"
 
+    # PHASE 14: Template fallback requires BOTH ALLOW_TEMPLATE_FALLBACK=true
+    # AND PIPELINE_MODE=test. Never fake planning in production.
+    pipeline_mode = os.environ.get("PIPELINE_MODE", "production").lower()
+    fallback_allowed = allow_fallback and pipeline_mode == "test"
+    if allow_fallback and pipeline_mode != "test":
+        raise LLMError(
+            f"ALLOW_TEMPLATE_FALLBACK=true but PIPELINE_MODE={pipeline_mode} — "
+            f"template fallback is only allowed in PIPELINE_MODE=test. "
+            f"Set PIPELINE_MODE=test or provide a real provider."
+        )
+
     if provider_name == "gemini":
         provider = GeminiProvider(config)
         if provider.is_available():
             return provider
-        if allow_fallback:
+        if fallback_allowed:
             return TemplateProvider(config)
-        raise LLMError("LLM_PROVIDER=gemini but GEMINI_API_KEY not set. Set ALLOW_TEMPLATE_FALLBACK=true to use template fallback.")
+        raise LLMError("LLM_PROVIDER=gemini but GEMINI_API_KEY not set. Set ALLOW_TEMPLATE_FALLBACK=true AND PIPELINE_MODE=test to use template fallback.")
 
     if provider_name == "openai":
         provider = OpenAIProvider(config)
         if provider.is_available():
             return provider
-        if allow_fallback:
+        if fallback_allowed:
             return TemplateProvider(config)
-        raise LLMError("LLM_PROVIDER=openai but OPENAI_API_KEY not set. Set ALLOW_TEMPLATE_FALLBACK=true to use template fallback.")
+        raise LLMError("LLM_PROVIDER=openai but OPENAI_API_KEY not set. Set ALLOW_TEMPLATE_FALLBACK=true AND PIPELINE_MODE=test to use template fallback.")
 
     return TemplateProvider(config)
