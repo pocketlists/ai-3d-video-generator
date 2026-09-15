@@ -1,4 +1,5 @@
 name: AI Video Pipeline (Master)
+
 on:
   workflow_dispatch:
     inputs:
@@ -31,27 +32,36 @@ jobs:
   receive:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      job_id: ${{ steps.create.outputs.job_id }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with:
+          python-version: '3.12'
       - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR $METRICS_DIR $STATE_DIR $LOG_DIR
       - name: Receive request
+        id: create
         env:
           PROMPT: ${{ github.event.inputs.prompt }}
           STYLE: ${{ github.event.inputs.style }}
         run: |
-          python -c """
+          python -c "
           import json, os, uuid, time
           job_id = 'job_' + time.strftime('%Y%m%d_%H%M%S') + '_' + uuid.uuid4().hex[:6]
           data = {'job_id': job_id, 'prompt': os.environ['PROMPT'], 'style': os.environ['STYLE'],
                   'created_at': time.time(), 'status': 'RECEIVED'}
           with open(os.environ['ARTIFACT_DIR'] + '/request.json', 'w') as f:
               json.dump(data, f, indent=2)
-          print(f'Job ID: {job_id}')
-          """
+          print(f'::notice::Job ID: {job_id}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'job_id={job_id}\n')
+          "
       - uses: actions/upload-artifact@v4
-        with: 
+        with:
+          name: pipeline-request
+          path: /tmp/pipeline_artifacts/
+          retention-days: 7
 
   # ── STAGE 2: PLANNING ──
   planning:
@@ -61,12 +71,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with:
+          python-version: '3.12'
       - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR $METRICS_DIR
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-request
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - name: Run AI planning
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -75,7 +86,10 @@ jobs:
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.0-flash' }}
         run: python -m controller.orchestrator --stage ai_planning
       - uses: actions/upload-artifact@v4
-        with: 
+        with:
+          name: pipeline-plan
+          path: /tmp/pipeline_artifacts/
+          retention-days: 7
 
   # ── STAGE 3: SCRIPT BREAKDOWN ──
   script:
@@ -85,15 +99,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with:
+          python-version: '3.12'
       - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR $METRICS_DIR
       - uses: actions/download-artifact@v4
         with:
-          name: pipeline-script
-          path: ${{ env.ARTIFACT_DIR }}
+          name: pipeline-plan
+          path: /tmp/pipeline_artifacts/
       - run: python -m controller.orchestrator --stage script_breakdown
       - uses: actions/upload-artifact@v4
-        with: 
+        with:
+          name: pipeline-script
+          path: /tmp/pipeline_artifacts/
+          retention-days: 7
 
   # ── STAGE 4: ASSET COLLECTION ──
   assets:
@@ -103,15 +121,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with:
+          python-version: '3.12'
       - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR $METRICS_DIR
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-script
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - run: python -m controller.orchestrator --stage asset_collection
       - uses: actions/upload-artifact@v4
-        with: 
+        with:
+          name: pipeline-assets
+          path: /tmp/pipeline_artifacts/
+          retention-days: 7
 
   # ── STAGES 5-7: CHARACTERS, ENVIRONMENTS, PROPS (parallel) ──
   characters:
@@ -121,18 +143,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with:
+          python-version: '3.12'
       - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR $METRICS_DIR
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-script
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - env:
           THREE_D_ASSET_API_KEY: ${{ secrets.THREE_D_ASSET_API_KEY }}
           THREE_D_ASSET_API_URL: ${{ secrets.THREE_D_ASSET_API_URL }}
         run: python -m controller.orchestrator --stage characters
       - uses: actions/upload-artifact@v4
-        with: 
+        with:
+          name: pipeline-characters
+          path: /tmp/pipeline_artifacts/
+          retention-days: 7
 
   environments:
     needs: script
@@ -141,18 +167,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with:
+          python-version: '3.12'
       - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR $METRICS_DIR
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-script
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - env:
           THREE_D_ASSET_API_KEY: ${{ secrets.THREE_D_ASSET_API_KEY }}
           THREE_D_ASSET_API_URL: ${{ secrets.THREE_D_ASSET_API_URL }}
         run: python -m controller.orchestrator --stage environments
       - uses: actions/upload-artifact@v4
-        with: 
+        with:
+          name: pipeline-environments
+          path: /tmp/pipeline_artifacts/
+          retention-days: 7
 
   props:
     needs: script
@@ -161,18 +191,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with:
+          python-version: '3.12'
       - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR $METRICS_DIR
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-script
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - env:
           THREE_D_ASSET_API_KEY: ${{ secrets.THREE_D_ASSET_API_KEY }}
           THREE_D_ASSET_API_URL: ${{ secrets.THREE_D_ASSET_API_URL }}
         run: python -m controller.orchestrator --stage props
       - uses: actions/upload-artifact@v4
-        with: 
+        with:
+          name: pipeline-props
+          path: /tmp/pipeline_artifacts/
+          retention-days: 7
 
   # ── STAGES 11-13: VOICE, MUSIC, SFX (parallel with assets) ──
   voice_tts:
@@ -182,18 +216,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with:
+          python-version: '3.12'
       - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR $METRICS_DIR
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-script
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - env:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
-          TTS_PROVIDER: ${{ vars.TTS_PROVIDER || 'google' }}
+          TTS_PROVIDER: ${{ vars.TTS_PROVIDER || 'gtts' }}
         run: python -m controller.orchestrator --stage voice_tts
       - uses: actions/upload-artifact@v4
-        with: 
+        with:
+          name: pipeline-voice
+          path: /tmp/pipeline_artifacts/
+          retention-days: 7
 
   music:
     needs: script
@@ -202,15 +240,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with:
+          python-version: '3.12'
       - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-script
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - run: python -m controller.orchestrator --stage music
       - uses: actions/upload-artifact@v4
-        with: 
+        with:
+          name: pipeline-music
+          path: /tmp/pipeline_artifacts/
+          retention-days: 7
 
   sfx:
     needs: script
@@ -219,15 +261,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with:
+          python-version: '3.12'
       - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-script
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - run: python -m controller.orchestrator --stage sfx
       - uses: actions/upload-artifact@v4
-        with: 
+        with:
+          name: pipeline-sfx
+          path: /tmp/pipeline_artifacts/
+          retention-days: 7
 
   # ── STAGE 8: ANIMATION (needs characters+env+props) ──
   animation:
@@ -237,23 +283,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with:
+          python-version: '3.12'
       - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-characters
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-environments
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-props
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - run: python -m controller.orchestrator --stage animation
       - uses: actions/upload-artifact@v4
-        with: 
+        with:
+          name: pipeline-animation
+          path: /tmp/pipeline_artifacts/
+          retention-days: 7
 
   # ── STAGE 9: CAMERA ──
   camera:
@@ -263,15 +313,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with:
+          python-version: '3.12'
       - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-environments
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - run: python -m controller.orchestrator --stage camera
       - uses: actions/upload-artifact@v4
-        with: 
+        with:
+          name: pipeline-camera
+          path: /tmp/pipeline_artifacts/
+          retention-days: 7
 
   # ── STAGE 10: LIGHTING ──
   lighting:
@@ -281,15 +335,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with:
+          python-version: '3.12'
       - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-environments
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - run: python -m controller.orchestrator --stage lighting
       - uses: actions/upload-artifact@v4
-        with: 
+        with:
+          name: pipeline-lighting
+          path: /tmp/pipeline_artifacts/
+          retention-days: 7
 
   # ── STAGE 14: LIP SYNC ──
   lip_sync:
@@ -299,19 +357,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with:
+          python-version: '3.12'
       - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-voice
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-characters
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - run: python -m controller.orchestrator --stage lip_sync
       - uses: actions/upload-artifact@v4
-        with: 
+        with:
+          name: pipeline-lipsync
+          path: /tmp/pipeline_artifacts/
+          retention-days: 7
 
   # ── STAGE 15: BLENDER ASSEMBLY ──
   assembly:
@@ -321,57 +383,96 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with:
+          python-version: '3.12'
       - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-animation
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-camera
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-lighting
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-lipsync
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - run: python -m controller.orchestrator --stage blender_assembly
       - uses: actions/upload-artifact@v4
-        with: 
+        with:
+          name: pipeline-assembly
+          path: /tmp/pipeline_artifacts/
+          retention-days: 7
 
-  # ── STAGE 16: RENDER (parallel matrix) ──
-  render:
+  # ── STAGE 15.5: RENDER PREPARE (compute dynamic worker matrix) ──
+  render_prepare:
     needs: assembly
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.compute.outputs.matrix }}
+      num_workers: ${{ steps.compute.outputs.num_workers }}
+      total_frames: ${{ steps.compute.outputs.total_frames }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compute worker matrix
+        id: compute
+        env:
+          REQUESTED_WORKERS: ${{ github.event.inputs.num_workers }}
+        run: |
+          python -c "
+          import json, os
+          requested = int(os.environ.get('REQUESTED_WORKERS', '4') or '4')
+          actual = min(max(1, requested), 20)
+          matrix = [i for i in range(actual)]
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'matrix={json.dumps(matrix)}\n')
+              f.write(f'num_workers={actual}\n')
+              f.write(f'total_frames=1440\n')
+          print(f'REQUESTED_WORKERS={requested}')
+          print(f'MATRIX_WORKERS={actual}')
+          "
+
+  # ── STAGE 16: RENDER (dynamic parallel matrix) ──
+  render:
+    needs: [assembly, render_prepare]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        worker_id: [0, 1, 2, 3]
+        worker_id: ${{ fromJSON(needs.render_prepare.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with:
+          python-version: '3.12'
       - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-assembly
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - name: Install Blender
         run: sudo apt-get update -qq && sudo apt-get install -y -qq blender xvfb libgl1-mesa-glx libegl1 libglx-mesa0 2>/dev/null || true
       - name: Render (Worker ${{ matrix.worker_id }})
         env:
           WORKER_ID: ${{ matrix.worker_id }}
-          NUM_WORKERS: ${{ github.event.inputs.num_workers || 4 }}
-          TOTAL_FRAMES: 1440
+          NUM_WORKERS: ${{ needs.render_prepare.outputs.num_workers }}
+          TOTAL_FRAMES: ${{ needs.render_prepare.outputs.total_frames }}
           RENDER_ENGINE: BLENDER_EEVEE
+          PIPELINE_MODE: production
         run: |
           export FRAME_START=$((WORKER_ID * TOTAL_FRAMES / NUM_WORKERS + 1))
           export FRAME_END=$(((WORKER_ID + 1) * TOTAL_FRAMES / NUM_WORKERS))
+          echo "WORKER_ID=$WORKER_ID FRAME_START=$FRAME_START FRAME_END=$FRAME_END"
           python -m controller.orchestrator --stage render_workers
       - uses: actions/upload-artifact@v4
         if: always()
@@ -388,15 +489,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with:
+          python-version: '3.12'
       - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR
       - uses: actions/download-artifact@v4
         with:
-          pattern: 
+          pattern: pipeline-render-*
+          path: /tmp/pipeline_artifacts/renders/
           merge-multiple: true
       - run: python -m controller.orchestrator --stage quality_check
       - uses: actions/upload-artifact@v4
-        with: 
+        with:
+          name: pipeline-quality
+          path: /tmp/pipeline_artifacts/
+          retention-days: 7
 
   # ── STAGE 18: FFMPEG ASSEMBLY ──
   ffmpeg:
@@ -406,7 +512,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with:
+          python-version: '3.12'
       - run: |
           pip install -r requirements.txt
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
@@ -414,22 +521,25 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-quality
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-voice
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-music
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-sfx
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - run: python -m controller.orchestrator --stage ffmpeg_assembly
       - uses: actions/upload-artifact@v4
-        with: 
+        with:
+          name: pipeline-final
+          path: /tmp/pipeline_artifacts/output/
+          retention-days: 14
 
   # ── STAGE 19: TELEGRAM DELIVERY ──
   delivery:
@@ -439,11 +549,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with:
+          python-version: '3.12'
       - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR
       - uses: actions/download-artifact@v4
         with:
-          name: 
+          name: pipeline-final
+          path: /tmp/pipeline_artifacts/output/
       - env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
@@ -457,12 +569,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with:
+          python-version: '3.12'
       - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR $METRICS_DIR
       - uses: actions/download-artifact@v4
         with:
           name: pipeline-quality
-          path: ${{ env.ARTIFACT_DIR }}
+          path: /tmp/pipeline_artifacts/
       - run: python -m controller.orchestrator --stage self_optimize
       - uses: actions/upload-artifact@v4
-        with: 
+        with:
+          name: pipeline-optimization
+          path: /tmp/pipeline_metrics/
+          retention-days: 30
