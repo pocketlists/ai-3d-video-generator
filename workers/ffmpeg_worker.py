@@ -1,17 +1,28 @@
 """
-FFmpeg worker — assembles final video from rendered frames and audio.
+FFmpeg worker — no silent fallbacks, structured errors, single final encode.
 
-Stage 18: Merges rendered frame sequences with voice, music, and SFX
-audio tracks into the final MP4 video using FFmpeg.
+Fixes:
+- Audio merge failure raises REAL error (never silently returns first file)
+- Single final encode (avoid repeated encoding)
+- Validates FFmpeg exit codes
+- Structured error reporting
 """
 import json
 import os
 import subprocess
-import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from workers.base_worker import BaseWorker
-from utils.file_validator import validate_video_file
+from utils.logger import PipelineLogger
+from utils.error_classifier import classify_error
+
+
+class FFmpegError(Exception):
+    """Real FFmpeg pipeline error — never silently swallowed."""
+    def __init__(self, message: str, error_type: str = "FFMPEG_ERROR", retryable: bool = True):
+        super().__init__(message)
+        self.error_type = error_type
+        self.retryable = retryable
 
 
 class FFmpegWorker(BaseWorker):
@@ -20,227 +31,243 @@ class FFmpegWorker(BaseWorker):
     def run(self) -> Dict[str, Any]:
         artifact_dir = os.environ.get("ARTIFACT_DIR", "/tmp/pipeline_artifacts")
         renders_dir = os.path.join(artifact_dir, "renders")
-        audio_dir = os.path.join(artifact_dir, "audio")
         output_dir = os.path.join(artifact_dir, "output")
         os.makedirs(output_dir, exist_ok=True)
 
-        # Collect frames
-        frames = self._collect_frames(renders_dir)
-        if not frames:
-            return {"status": "error", "error": "No rendered frames found"}
+        # 1. Load render manifest (frame → path mapping)
+        manifest = self._load_render_manifest(renders_dir)
+        if not manifest:
+            raise FFmpegError(
+                "render_manifest.json not found — render stage must complete first",
+                error_type="INVALID_INPUT", retryable=False,
+            )
 
-        # Collect audio
-        voice_files = self._collect_audio(audio_dir, "voice")
-        music_file = os.path.join(audio_dir, "background_music.wav")
-        sfx_files = self._collect_audio(audio_dir, "sfx")
+        if manifest.get("missing_frames"):
+            raise FFmpegError(
+                f"Cannot encode: {len(manifest['missing_frames'])} frames missing "
+                f"(first few: {manifest['missing_frames'][:5]})",
+                error_type="QUALITY_FAILURE", retryable=False,
+            )
 
-        start_time = time.time()
+        # 2. Assemble frames → video (via concat demuxer, single pass)
+        frames_file = self._write_concat_list(manifest, renders_dir)
+        temp_video = os.path.join(output_dir, "video_noaudio.mp4")
+        self._encode_video(frames_file, temp_video, manifest)
 
-        # Step 1: Create video from frames
-        video_path = os.path.join(output_dir, "video_only.mp4")
-        self._frames_to_video(frames, video_path)
+        # 3. Mix audio (voice + music + sfx)
+        audio_path = self._mix_audio(artifact_dir, output_dir)
 
-        # Step 2: Mix audio tracks
-        audio_path = os.path.join(output_dir, "mixed_audio.wav")
-        self._mix_audio(voice_files, music_file, sfx_files, audio_path, len(frames))
-
-        # Step 3: Merge video and audio
+        # 4. Final encode: mux video + audio (single final encode)
         final_path = os.path.join(output_dir, "final_video.mp4")
-        self._merge_av(video_path, audio_path, final_path)
+        self._mux_av(temp_video, audio_path, final_path)
 
-        elapsed = time.time() - start_time
+        # 5. Validate final output
+        self._validate_output(final_path)
 
-        # Validate
-        if not os.path.exists(final_path):
-            return {"status": "error", "error": "Final video was not created"}
-
-        file_size = os.path.getsize(final_path)
-
-        # Get duration via ffprobe
-        duration = self._get_duration(final_path)
-
-        # Record metrics
-        from optimizer.metrics_collector import MetricsCollector
-        collector = MetricsCollector()
-        collector.record_ffmpeg(
-            input_count=len(frames), output_duration=duration,
-            processing_time=elapsed, output_size=file_size,
-            codec="libx264", input_formats=["png", "wav"]
-        )
-        collector.save()
+        # Clean temp
+        if os.path.exists(temp_video):
+            os.remove(temp_video)
 
         return {
             "status": "success",
-            "final_video_path": final_path,
-            "duration_sec": round(duration, 1),
-            "file_size_mb": round(file_size / 1024 / 1024, 2),
-            "frame_count": len(frames),
-            "processing_time_sec": round(elapsed, 1),
+            "final_video": final_path,
+            "total_frames": manifest["total_frames"],
+            "file_size": os.path.getsize(final_path),
         }
 
-    def _collect_frames(self, renders_dir: str) -> List[str]:
-        frames = []
-        if not os.path.exists(renders_dir):
-            return frames
-        for worker_dir in sorted(os.listdir(renders_dir)):
-            worker_path = os.path.join(renders_dir, worker_dir)
-            if os.path.isdir(worker_path):
-                for fname in sorted(os.listdir(worker_path)):
-                    if fname.endswith(".png"):
-                        frames.append(os.path.join(worker_path, fname))
-        return frames
+    def _load_render_manifest(self, renders_dir: str) -> Optional[Dict]:
+        manifest_path = os.path.join(renders_dir, "render_manifest.json")
+        if not os.path.exists(manifest_path):
+            return None
+        with open(manifest_path) as f:
+            return json.load(f)
 
-    def _collect_audio(self, audio_dir: str, prefix: str) -> List[str]:
-        files = []
-        if not os.path.exists(audio_dir):
-            return files
-        for fname in sorted(os.listdir(audio_dir)):
-            if fname.startswith(prefix) and (fname.endswith(".wav") or fname.endswith(".mp3")):
-                files.append(os.path.join(audio_dir, fname))
-        return files
+    def _write_concat_list(self, manifest: Dict, renders_dir: str) -> str:
+        """Write FFmpeg concat demuxer file preserving worker dirs."""
+        concat_path = os.path.join(renders_dir, "concat_list.txt")
+        with open(concat_path, "w") as f:
+            for frame_num in sorted(manifest["frames"].keys(), key=int):
+                frame_path = os.path.join(renders_dir, manifest["frames"][frame_num])
+                f.write(f"file '{frame_path}'\n")
+        return concat_path
 
-    def _frames_to_video(self, frames: List[str], output_path: str) -> None:
-        """Create video from PNG frames using FFmpeg."""
-        if not self._ffmpeg_available():
-            self.logger.warning("FFmpeg not available, creating placeholder video")
-            self._create_placeholder_video(output_path)
-            return
-
-        # Create a file list or use pattern
-        frame_dir = os.path.dirname(frames[0])
+    def _encode_video(self, concat_file: str, output: str, manifest: Dict) -> None:
+        fps = manifest.get("fps", 24)
         cmd = [
-            "ffmpeg", "-y",
-            "-framerate", "24",
-            "-i", os.path.join(frame_dir, "frame_%04d.png"),
-            "-c:v", "libx264",
-            "-preset", "veryfast",
-            "-crf", "23",
-            "-pix_fmt", "yuv420p",
-            output_path
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+            "-i", concat_file,
+            "-c:v", "libx264", "-r", str(fps),
+            "-pix_fmt", "yuv420p", "-preset", "medium",
+            output,
         ]
-        try:
-            subprocess.run(cmd, capture_output=True, timeout=300, check=True)
-            self.logger.info(f"Video created: {output_path}")
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            self.logger.error(f"FFmpeg video creation failed: {e}")
-            self._create_placeholder_video(output_path)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if result.returncode != 0 or not os.path.exists(output):
+            raise FFmpegError(
+                f"Video encode failed (exit {result.returncode}): {result.stderr[-300:]}",
+                error_type=classify_error(result.stderr or "ffmpeg"),
+            )
 
-    def _mix_audio(self, voice_files: List[str], music_file: str,
-                   sfx_files: List[str], output_path: str, frame_count: int) -> None:
-        """Mix all audio tracks into a single track."""
-        if not self._ffmpeg_available():
-            self._create_placeholder_audio(output_path, frame_count)
-            return
+    def _mix_audio(self, artifact_dir: str, output_dir: str) -> str:
+        """
+        Mix voice + music + sfx with normalization and ducking.
+        Raises FFmpegError on failure — NEVER returns a single file silently.
+        """
+        voice = self._find_audio(artifact_dir, "voice")
+        music = self._find_audio(artifact_dir, "music")
+        sfx = self._find_audio(artifact_dir, "sfx")
 
+        if not any([voice, music, sfx]):
+            # No audio at all — generate 1s silence as placeholder
+            silence_path = os.path.join(output_dir, "silence.wav")
+            cmd = ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+                   "-t", "1", silence_path]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            if result.returncode != 0:
+                raise FFmpegError(f"Silence generation failed: {result.stderr[-200:]}")
+            return silence_path
+
+        # Build filter graph: normalize each, apply volumes, duck music under voice
         inputs = []
-        filter_parts = []
-
+        filters = []
         idx = 0
-        if os.path.exists(music_file):
-            inputs.extend(["-i", music_file])
-            filter_parts.append(f"[{idx}:a]volume=0.3[a{idx}]")
+
+        if voice:
+            inputs.extend(["-i", voice])
+            filters.append(f"[{idx}:a]volume=0.8,loudnorm=I=-16:TP=-1.5[v{idx}]")
+            voice_idx = idx
+            idx += 1
+        if music:
+            inputs.extend(["-i", music])
+            filters.append(f"[{idx}:a]volume=0.3,loudnorm=I=-20:TP=-2[m{idx}]")
+            music_idx = idx
+            idx += 1
+        if sfx:
+            inputs.extend(["-i", sfx])
+            filters.append(f"[{idx}:a]volume=0.4,loudnorm=I=-18:TP=-1.5[s{idx}]")
+            sfx_idx = idx
             idx += 1
 
-        for vf in voice_files:
-            if os.path.exists(vf):
-                inputs.extend(["-i", vf])
-                filter_parts.append(f"[{idx}:a]volume=0.8[a{idx}]")
-                idx += 1
+        # Combine
+        parts = []
+        if voice:
+            parts.append(f"[v{voice_idx}]")
+        if music:
+            parts.append(f"[m{music_idx}]")
+        if sfx:
+            parts.append(f"[s{sfx_idx}]")
 
-        for sf in sfx_files:
-            if os.path.exists(sf):
-                inputs.extend(["-i", sf])
-                filter_parts.append(f"[{idx}:a]volume=0.4[a{idx}]")
-                idx += 1
+        mix_input = "".join(parts)
+        n = len(parts)
+        filters.append(f"{mix_input}amix=inputs={n}:duration=longest[aout]")
 
-        if idx == 0:
-            self._create_placeholder_audio(output_path, frame_count)
-            return
-
-        # Mix all
-        mix_inputs = "".join(f"[a{i}]" for i in range(idx))
-        filter_complex = ";".join(filter_parts) + f";{mix_inputs}amix=inputs={idx}:duration=longest[out]"
-
+        filter_complex = ";".join(filters)
+        output = os.path.join(output_dir, "mixed_audio.wav")
         cmd = ["ffmpeg", "-y"] + inputs + [
             "-filter_complex", filter_complex,
-            "-map", "[out]",
-            "-ac", "2",
-            "-ar", "44100",
-            output_path
+            "-map", "[aout]", "-ar", "44100", "-ac", "2",
+            output,
         ]
-        try:
-            subprocess.run(cmd, capture_output=True, timeout=120, check=True)
-            self.logger.info(f"Audio mixed: {output_path}")
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            self.logger.error(f"Audio mixing failed: {e}")
-            self._create_placeholder_audio(output_path, frame_count)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if result.returncode != 0 or not os.path.exists(output):
+            raise FFmpegError(
+                f"Audio mix failed (exit {result.returncode}): {result.stderr[-300:]} — "
+                f"voice={voice}, music={music}, sfx={sfx}",
+            )
+        return output
 
-    def _merge_av(self, video_path: str, audio_path: str, output_path: str) -> None:
-        """Merge video and audio into final output."""
-        if not self._ffmpeg_available():
-            # Just copy the video
-            import shutil
-            shutil.copy2(video_path, output_path)
-            return
+    def _find_audio(self, artifact_dir: str, kind: str) -> Optional[str]:
+        """Find the first audio file of a kind."""
+        for root, dirs, files in os.walk(artifact_dir):
+            for fname in files:
+                if kind in fname.lower() and fname.endswith((".mp3", ".wav", ".ogg", ".m4a")):
+                    return os.path.join(root, fname)
+        return None
 
+    def _mux_av(self, video: str, audio: str, output: str) -> None:
+        """Final mux: single final encode."""
         cmd = [
-            "ffmpeg", "-y",
-            "-i", video_path,
-            "-i", audio_path,
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-b:a", "128k",
-            "-shortest",
-            "-movflags", "+faststart",
-            output_path
+            "ffmpeg", "-y", "-i", video, "-i", audio,
+            "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
+            "-shortest", output,
         ]
-        try:
-            subprocess.run(cmd, capture_output=True, timeout=300, check=True)
-            self.logger.info(f"Final video: {output_path}")
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            self.logger.error(f"A/V merge failed: {e}")
-            import shutil
-            shutil.copy2(video_path, output_path)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if result.returncode != 0 or not os.path.exists(output):
+            raise FFmpegError(
+                f"Final mux failed (exit {result.returncode}): {result.stderr[-300:]}",
+            )
 
-    def _ffmpeg_available(self) -> bool:
-        try:
-            result = subprocess.run(["ffmpeg", "-version"], capture_output=True, timeout=5)
-            return result.returncode == 0
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            return False
+    def _validate_output(self, path: str) -> None:
+        """Validate the final output with ffprobe."""
+        if not os.path.exists(path) or os.path.getsize(path) < 1000:
+            raise FFmpegError(f"Final output invalid: {path} (size too small)")
+        cmd = ["ffprobe", "-v", "quiet", "-print_format", "json",
+               "-show_format", "-show_streams", path]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if result.returncode != 0:
+            raise FFmpegError(f"Output validation failed: {result.stderr[-200:]}")
+        info = json.loads(result.stdout)
+        streams = info.get("streams", [])
+        if not any(s.get("codec_type") == "video" for s in streams):
+            raise FFmpegError("Final output has no video stream")
 
-    def _get_duration(self, video_path: str) -> float:
+    # ── Backward-compat methods (v2 API) ──
+
+    @staticmethod
+    def _ffmpeg_available() -> bool:
+        """Check if ffmpeg is available."""
+        import shutil
+        return shutil.which("ffmpeg") is not None
+
+    @staticmethod
+    def _get_duration(path: str) -> float:
+        """Get video duration in seconds (60.0 default for nonexistent)."""
+        if not os.path.exists(path):
+            return 60.0
         try:
             result = subprocess.run(
-                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                 "-of", "default=noprint_wrappers=1:nokey=1", video_path],
-                capture_output=True, text=True, timeout=10
+                ["ffprobe", "-v", "quiet", "-print_format", "json",
+                 "-show_format", path], capture_output=True, text=True, timeout=10
             )
-            return float(result.stdout.strip())
+            if result.returncode == 0:
+                info = json.loads(result.stdout)
+                return float(info.get("format", {}).get("duration", 60.0))
         except Exception:
-            return 60.0
+            pass
+        return 60.0
 
-    def _create_placeholder_video(self, path: str) -> None:
-        """Create a minimal valid MP4 when FFmpeg is not available."""
+    @staticmethod
+    def _create_placeholder_audio(path: str, frame_count: int = 240) -> None:
+        """Create a silent placeholder audio file."""
+        duration = frame_count / 24.0  # assume 24fps
+        cmd = ["ffmpeg", "-y", "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=stereo",
+               "-t", str(duration), path]
         try:
-            from PIL import Image
-            import struct
-            # Create a 1-frame black video as placeholder
-            img = Image.new("RGB", (1280, 720), color=(10, 10, 30))
-            img.save(path, "PNG")
-        except ImportError:
+            subprocess.run(cmd, capture_output=True, timeout=30)
+        except Exception:
+            # Write a minimal WAV header as fallback
             with open(path, "wb") as f:
-                f.write(b"placeholder")
+                f.write(b"RIFF" + b"\x00" * 44)
 
-    def _create_placeholder_audio(self, path: str, frame_count: int) -> None:
-        """Create silent audio placeholder."""
-        import wave, struct
-        duration = frame_count / 24
-        sample_rate = 22050
-        with wave.open(path, "w") as wav:
-            wav.setnchannels(1)
-            wav.setsampwidth(2)
-            wav.setframerate(sample_rate)
-            # Write silence
-            for _ in range(int(duration * sample_rate)):
-                wav.writeframes(struct.pack("h", 0))
+    def _collect_audio(self, directory: str, kind: str) -> list:
+        """Collect ALL audio files of a kind from directory (recursive)."""
+        found = []
+        for root, dirs, files in os.walk(directory):
+            for fname in sorted(files):
+                if kind in fname.lower() and fname.endswith((".mp3", ".wav", ".ogg", ".m4a")):
+                    found.append(os.path.join(root, fname))
+        return found
+
+    @staticmethod
+    def _collect_frames(renders_dir: str) -> list:
+        """Collect all rendered frame files (recursive), sorted by frame number."""
+        from pathlib import Path
+        frames = []
+        for f in Path(renders_dir).rglob("frame_*.png"):
+            frames.append(str(f))
+        def frame_num(p):
+            try:
+                return int(Path(p).stem.replace("frame_", "").lstrip("0") or "0")
+            except ValueError:
+                return 0
+        return sorted(frames, key=frame_num)
+
