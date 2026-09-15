@@ -33,8 +33,29 @@ class LowPolyGenerator:
         self.rng = random.Random(seed)
         self.max_vertices = max_vertices
 
+    def _check_production_mode(self) -> None:
+        """Prevent accidental production use of procedural low-poly generator.
+
+        PHASE 27: Low-poly generator is ONLY for:
+        - SMOKE_TEST / TEST_MODE
+        - PROCEDURAL_STYLE (explicit)
+        - Fallback when PIPELINE_MODE=test
+
+        In PIPELINE_MODE=production, raising an error instead of silently
+        generating a cube prevents fake-success in production.
+        """
+        import os
+        mode = os.environ.get("PIPELINE_MODE", "production").lower()
+        if mode == "production":
+            raise RuntimeError(
+                "LowPolyGenerator used in PIPELINE_MODE=production — "
+                "procedural generation is not allowed for production assets. "
+                "Set PIPELINE_MODE=test or configure a real asset provider."
+            )
+
     def generate_character(self, name: str = "character") -> MeshData:
         """Generate a simple low-poly humanoid character."""
+        self._check_production_mode()
         verts: List[Tuple[float, float, float]] = []
         faces: List[List[int]] = []
 
@@ -91,6 +112,7 @@ class LowPolyGenerator:
 
     def generate_environment(self, env_type: str = "outdoor") -> MeshData:
         """Generate a low-poly environment ground plane with features."""
+        self._check_production_mode()
         verts: List[Tuple[float, float, float]] = []
         faces: List[List[int]] = []
 
@@ -140,6 +162,7 @@ class LowPolyGenerator:
 
     def generate_prop(self, prop_type: str = "box") -> MeshData:
         """Generate a simple low-poly prop."""
+        self._check_production_mode()
         verts: List[Tuple[float, float, float]] = []
         faces: List[List[int]] = []
 
