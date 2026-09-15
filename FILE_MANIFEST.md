@@ -1,6 +1,4 @@
-# FILE_MANIFEST.md — Complete File Listing
-
-This manifest contains every file that exists in the repository. The repository must match this manifest.
+# FILE_MANIFEST.md — Complete File Listing (v2.0)
 
 ## Root Files
 - `README.md`
@@ -22,6 +20,16 @@ This manifest contains every file that exists in the repository. The repository 
 - `controller/state_manager.py`
 - `controller/pipeline.py`
 - `controller/orchestrator.py`
+- `controller/hermes.py`
+- `controller/telegram_escalation.py`
+
+## Providers (`providers/`)
+- `providers/__init__.py`
+- `providers/llm_provider.py`
+- `providers/asset_provider.py`
+- `providers/tts_provider.py`
+- `providers/audio_provider.py`
+- `providers/lip_sync_provider.py`
 
 ## Workers (`workers/`)
 - `workers/__init__.py`
@@ -54,6 +62,8 @@ This manifest contains every file that exists in the repository. The repository 
 - `utils/artifact_store.py`
 - `utils/retry.py`
 - `utils/telegram_client.py`
+- `utils/cpu_monitor.py`
+- `utils/asset_validator.py`
 
 ## Blender (`blender/`)
 - `blender/__init__.py`
@@ -80,6 +90,8 @@ This manifest contains every file that exists in the repository. The repository 
 - `tests/test_telegram_upload.py`
 - `tests/test_optimization.py`
 - `tests/test_failure_recovery.py`
+- `tests/test_providers.py`
+- `tests/test_hermes.py`
 
 ## Scripts (`scripts/`)
 - `scripts/smoke_test.py`
@@ -93,26 +105,7 @@ This manifest contains every file that exists in the repository. The repository 
 - `docs/PIPELINE.md`
 
 ## GitHub Actions Workflows (`.github/workflows/`)
-- `.github/workflows/01_receive_request.yml`
-- `.github/workflows/02_ai_planning.yml`
-- `.github/workflows/03_script_breakdown.yml`
-- `.github/workflows/04_asset_collection.yml`
-- `.github/workflows/05_characters.yml`
-- `.github/workflows/06_environments.yml`
-- `.github/workflows/07_props.yml`
-- `.github/workflows/08_animation.yml`
-- `.github/workflows/09_camera.yml`
-- `.github/workflows/10_lighting.yml`
-- `.github/workflows/11_voice_tts.yml`
-- `.github/workflows/12_music.yml`
-- `.github/workflows/13_sfx.yml`
-- `.github/workflows/14_lip_sync.yml`
-- `.github/workflows/15_blender_assembly.yml`
-- `.github/workflows/16_render_workers.yml`
-- `.github/workflows/17_quality_check.yml`
-- `.github/workflows/18_ffmpeg_assembly.yml`
-- `.github/workflows/19_telegram_delivery.yml`
-- `.github/workflows/20_self_optimize.yml`
+- `.github/workflows/01_receive_request.yml` through `20_self_optimize.yml`
 
 ## Summary
 
@@ -120,13 +113,14 @@ This manifest contains every file that exists in the repository. The repository 
 |----------|-------|
 | Root files | 7 |
 | Config files | 3 |
-| Controller modules | 5 |
+| Controller modules | 7 |
+| Provider modules | 6 |
 | Worker modules | 21 |
-| Utils modules | 7 |
+| Utils modules | 9 |
 | Blender modules | 5 |
 | Optimizer modules | 4 |
-| Test files | 12 |
+| Test files | 13 |
 | Scripts | 3 |
 | Documentation | 4 |
 | GitHub Actions workflows | 20 |
-| **Total** | **91** |
+| **Total** | **102** |

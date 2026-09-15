@@ -1,5 +1,5 @@
-# Blender Settings — optimized for CPU rendering
-# ================================================
+# Blender Settings — optimized for CPU rendering with Eevee
+# =========================================================
 
 engine: BLENDER_EEVEE
 samples: 64
@@ -7,7 +7,7 @@ resolution: [1280, 720]
 resolution_percentage: 100
 fps: 24
 
-# EEVEE render settings
+# EEVEE render settings (default, fast on CPU)
 eevee:
   taa_render_samples: 64
   use_gtao: true
@@ -19,7 +19,7 @@ eevee:
   shadow_cube_size: 512
   shadow_cascade_size: 1024
 
-# Cycles fallback (CPU)
+# Cycles fallback (CPU only, slower)
 cycles:
   device: CPU
   samples: 32
@@ -28,13 +28,22 @@ cycles:
   use_adaptive_sampling: true
   adaptive_threshold: 0.01
 
+# Asset import settings
+import:
+  default_scale: 1.0
+  forward_axis: Y
+  up_axis: Z
+  validate_on_import: true
+  optimize_mesh: true
+
 # Optimization flags
 optimization:
-  disable_subsurface_scattering: false
   disable_volumetrics: true
   max_texture_size: 1024
   simplify_modifiers: true
   simplify_subdivision: 1
+  max_lights: 8
+  shadow_resolution: 512
 
 # Output
 output:
