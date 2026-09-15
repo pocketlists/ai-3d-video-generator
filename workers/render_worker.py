@@ -1,8 +1,8 @@
 """
-Render worker — renders frames using Blender in parallel.
+Render worker — renders frames with real CPU/RAM monitoring.
 
-Stage 16: Each worker instance renders a subset of frames from the
-assembled Blender scene. Workers run in parallel via GitHub Actions matrix.
+Stage 16: Each worker renders a subset of frames. Supports up to 20 parallel workers.
+Uses CPU monitor for real-time metrics. Falls back to placeholder frames if Blender unavailable.
 """
 import json
 import os
@@ -12,7 +12,7 @@ from typing import Any, Dict, List
 
 from workers.base_worker import BaseWorker
 from blender.render_manager import RenderManager, RenderTask, RenderResult
-from utils.file_validator import validate_file_exists
+from utils.cpu_monitor import CPUMonitor
 from optimizer.metrics_collector import MetricsCollector
 
 
@@ -33,23 +33,22 @@ class RenderWorker(BaseWorker):
         output_dir = os.path.join(artifact_dir, "renders", f"worker_{worker_id}")
         os.makedirs(output_dir, exist_ok=True)
 
-        # If blend file exists, render with Blender
+        # Initialize CPU monitor
+        monitor = CPUMonitor(worker_id=worker_id)
+        self.logger.info(f"Worker {worker_id} system: {monitor.get_system_info()}")
+
         if blend_file and os.path.exists(blend_file):
-            self.logger.info(f"Worker {worker_id}: rendering {blend_file} frames {frame_start}-{frame_end}")
+            # Real Blender rendering
             task = RenderTask(
-                worker_id=worker_id,
-                blend_file=blend_file,
-                output_dir=output_dir,
-                frame_start=frame_start,
-                frame_end=frame_end,
+                worker_id=worker_id, blend_file=blend_file, output_dir=output_dir,
+                frame_start=frame_start, frame_end=frame_end,
                 resolution=(int(resolution[0]), int(resolution[1])),
-                samples=samples,
-                engine=engine,
+                samples=samples, engine=engine,
             )
             manager = RenderManager(blend_file, os.path.join(artifact_dir, "renders"))
             result = manager.render_single_task(task, blender_path)
 
-            # Record metrics
+            # Record metrics with CPU monitoring
             collector = MetricsCollector()
             collector.record_render(
                 worker_id, frame_start, frame_end,
@@ -65,39 +64,49 @@ class RenderWorker(BaseWorker):
                 "elapsed_sec": result.elapsed_sec,
                 "output_files": result.output_files,
                 "error": result.error,
+                "system_info": monitor.get_system_info(),
             }
         else:
-            # No blend file — generate placeholder frames for pipeline testing
+            # Placeholder frames for pipeline testing
             self.logger.warning(f"Worker {worker_id}: no blend file, generating placeholder frames")
-            frames = self._generate_placeholder_frames(output_dir, frame_start, frame_end,
-                                                       int(resolution[0]), int(resolution[1]))
+            frames = self._generate_placeholder_frames(
+                output_dir, frame_start, frame_end,
+                int(resolution[0]), int(resolution[1]), monitor
+            )
+            summary = monitor.get_summary()
             return {
                 "status": "success",
                 "worker_id": worker_id,
                 "frames_rendered": len(frames),
                 "output_files": frames,
                 "note": "placeholder frames (no Blender available)",
+                "system_info": monitor.get_system_info(),
+                "render_summary": summary,
             }
 
     def _generate_placeholder_frames(self, output_dir: str, frame_start: int, frame_end: int,
-                                      width: int, height: int) -> List[str]:
-        """Generate simple PNG placeholder frames when Blender is not available."""
+                                      width: int, height: int, monitor: CPUMonitor) -> List[str]:
+        """Generate placeholder PNG frames with CPU monitoring."""
         try:
-            from PIL import Image
+            from PIL import Image, ImageDraw
         except ImportError:
             self.logger.error("PIL not available for placeholder frames")
             return []
 
         frames = []
-        for frame in range(frame_start, frame_end + 1):
+        total = frame_end - frame_start + 1
+        for i, frame in enumerate(range(frame_start, frame_end + 1)):
+            start = time.time()
             img = Image.new("RGB", (width, height), color=(20 + frame % 50, 30, 50))
-            # Add frame number text
-            from PIL import ImageDraw
             draw = ImageDraw.Draw(img)
             draw.text((10, 10), f"Frame {frame}", fill=(255, 255, 255))
             filepath = os.path.join(output_dir, f"frame_{frame:04d}.png")
             img.save(filepath)
             frames.append(filepath)
 
-        self.logger.info(f"Generated {len(frames)} placeholder frames")
+            frame_time = time.time() - start
+            metrics = monitor.record_frame(i + 1, total, frame_time,
+                                           "placeholder", f"{width}x{height}")
+
+        self.logger.info(f"Generated {len(frames)} placeholder frames\n{metrics.format_report()}")
         return frames
