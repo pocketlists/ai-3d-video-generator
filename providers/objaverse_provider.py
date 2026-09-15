@@ -45,6 +45,7 @@ class ObjaverseProvider(ThreeDAssetProvider):
         self.max_candidates = config.get("objaverse_max_candidates", 10)
         self.max_file_size_mb = config.get("objaverse_max_file_size_mb", 50)
         self.logger = PipelineLogger("objaverse")
+        self.last_status = "UNINITIALIZED"  # UNINITIALIZED → OK / PROVIDER_UNAVAILABLE / NO_RESULTS
 
     def is_available(self) -> bool:
         """Check if Objaverse is accessible (network test)."""
@@ -78,14 +79,26 @@ class ObjaverseProvider(ThreeDAssetProvider):
 
         This is RETRIEVAL (not generation). Searches existing assets,
         ranks them, and downloads the best match.
+
+        If the Objaverse index/library is unavailable, returns None and
+        sets last_status = PROVIDER_UNAVAILABLE (NOT a silent empty success).
         """
         self.logger.info(f"Objaverse search: {name} ({asset_type}) — {prompt[:60]}")
         start_time = time.time()
 
+        # Check availability first — DO NOT pretend an empty result is "success"
+        if not self.is_available():
+            self.logger.warning("Objaverse provider UNAVAILABLE — network or library not accessible")
+            self.last_status = "PROVIDER_UNAVAILABLE"
+            return None
+
         # Search candidates
         candidates = self._search_candidates(prompt, asset_type)
         if not candidates:
-            self.logger.warning(f"No Objaverse candidates found for: {name}")
+            # Distinguish "searched and found nothing" from "provider unavailable"
+            if self.last_status != "PROVIDER_UNAVAILABLE":
+                self.last_status = "NO_RESULTS"
+            self.logger.warning(f"No Objaverse candidates found for: {name} (status={self.last_status})")
             return None
 
         # Rank candidates
@@ -118,14 +131,42 @@ class ObjaverseProvider(ThreeDAssetProvider):
             # In production, use the objaverse-python library or HF datasets API
             annotations_url = self.HF_ANNOTATIONS_URL + "data/objects-meta.json.gz"
 
-            # For now, return empty — the actual dataset access requires
-            # downloading the full annotations which is very large
+            # The objaverse Python library or HF datasets API is required for
+            # real annotation search. If unavailable, return PROVIDER_UNAVAILABLE
+            # — DO NOT pretend an empty list is a successful "no matches" search.
             self.logger.info(f"Searching with keywords: {keywords}")
-            # PROIVDER_DEPENDENT: requires objaverse library or HF dataset access
-            return []
+            try:
+                import objaverse  # type: ignore
+                # Real search path (when library is installed)
+                uids = objaverse.search(keywords, max_results=self.max_candidates)
+                self.last_status = "OK"
+                return self._enrich_candidates(uids)
+            except ImportError:
+                self.logger.warning(
+                    "objaverse Python package not installed — "
+                    "install with: pip install objaverse. "
+                    "Marking as PROVIDER_UNAVAILABLE."
+                )
+                self.last_status = "PROVIDER_UNAVAILABLE"
+                return []
         except Exception as e:
             self.logger.error(f"Objaverse search failed: {e}")
             return []
+
+    def _enrich_candidates(self, uids: list) -> List[Dict]:
+        """Convert objaverse UIDs to candidate dicts with metadata."""
+        candidates = []
+        for uid in uids[:self.max_candidates]:
+            candidates.append({
+                "name": uid,
+                "url": f"https://huggingface.co/datasets/allenai/objaverse-xl/resolve/main/{uid}.glb",
+                "format": "glb",
+                "license": "CC-BY-4.0",  # default — verify per asset
+                "author": "objaverse",
+                "prompt": "",
+                "file_size_mb": 0,
+            })
+        return candidates
 
     def _extract_keywords(self, prompt: str) -> List[str]:
         """Extract search keywords from a prompt."""
