@@ -55,11 +55,18 @@ class TelegramEscalation:
         Returns escalation info dict (does NOT wait for response).
         The runner should exit after this call.
         """
-        if not self.enabled:
-            self.logger.warning("Telegram not configured, cannot escalate — returning escalation info only")
-            return {"escalated": False, "resume_token": "", "reason": "telegram_not_configured"}
-
+        # Resume token is ALWAYS generated — it is the resume key for resume.yml,
+        # independent of whether the Telegram delivery itself succeeded.
         resume_token = f"resume_{job_id}_{stage}_{uuid.uuid4().hex[:8]}"
+
+        if not self.enabled:
+            self.logger.warning(
+                "Telegram not configured, cannot escalate — "
+                "returning escalation info (resume token still valid for resume.yml)"
+            )
+            return {"escalated": False, "resume_token": resume_token,
+                    "reason": "telegram_not_configured"}
+
         message_id = self._send_escalation_message(job_id, stage, error, provider, context, resume_token)
 
         return {
