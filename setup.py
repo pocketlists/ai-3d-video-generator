@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="ai-3d-video-generator",
-    version="1.0.0",
+    version="4.0.0",
     description="AI-powered automated 3D video generation system via GitHub Actions",
     author="pocketlists",
     license="MIT",

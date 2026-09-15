@@ -1,6 +1,11 @@
 # AI 3D Video Generator — Default Configuration (v3.0)
 # Secrets MUST be in environment variables or GitHub Secrets, NOT here.
 
+# Pipeline mode: production | test
+# production: no placeholder frames, no template LLM fallback, no procedural assets
+# test: smoke tests, procedural allowed, placeholders allowed
+pipeline_mode: test
+
 # Pipeline settings
 pipeline:
   name: "ai-3d-video-generator"

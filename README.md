@@ -1,8 +1,32 @@
-# AI 3D Video Generator (v3.0)
+# AI 3D Video Generator (v4.0)
 
 Production-hardened AI-powered 3D video generation pipeline with Hermes Agent
 orchestration, persistent state, Telegram escalation with resume tokens, and
 deterministic parallel rendering.
+
+## What's New in v4.0
+
+- **blender/asset_importer.py** — GLB/GLTF/OBJ/FBX import with validation
+  (inside Blender: real import + normalization; outside: honest file-level checks)
+- **providers/google_cloud_tts.py** — real Google Cloud TTS provider,
+  clearly separated from free gTTS (no silent substitution)
+- **PIPELINE_MODE guard everywhere** — production can never produce
+  placeholder frames, template LLM plans, or procedural cubes silently
+- **Dynamic render matrix** — pipeline.yml generates the worker matrix from
+  the actual worker count (render_prepare job + fromJSON); matrix always
+  matches frame partitions
+- **Honest Objaverse** — returns PROVIDER_UNAVAILABLE (not silent empty
+  lists) when the retrieval library is missing
+- **Real cross-run persistence** — GitHubContentsStateStore commits state
+  via gh api (not just local files labeled "GitHub")
+- **render_manifest.json checksums** — per-frame sha256 for corruption
+  detection and hash-based reuse
+- **18 broken legacy workflows deleted** — the master pipeline.yml is the
+  ONE canonical pipeline (legacy `gh workflow run` chains could not share
+  artifacts across runs)
+- 26 new regression tests (200 total) covering partition/matrix match,
+  state persistence across runners, Telegram resume flow, production
+  guards, asset importer, checksums, TTS separation
 
 ## Honest Status (v3.0)
 
