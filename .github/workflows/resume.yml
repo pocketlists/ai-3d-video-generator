@@ -51,6 +51,41 @@ jobs:
           run-id: ${{ inputs.original_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Verify downloaded artifact integrity
+        if: ${{ inputs.original_run_id != '' }}
+        run: |
+          python -c "
+          import hashlib, json, os, sys
+          art = os.environ.get('ARTIFACT_DIR', '/tmp/pipeline_artifacts')
+          files = [f for r, d, fs in os.walk(art) for f in fs]
+          if not files:
+              print('ERROR: cross-run download produced no files')
+              sys.exit(1)
+          print(f'Downloaded artifact verified: {len(files)} files present')
+          mf = os.path.join(art, 'render_manifest.json')
+          if os.path.exists(mf):
+              with open(mf) as f:
+                  m = json.load(f)
+              checks = m.get('checksums', {})
+              bad = []
+              base = os.path.join(art, 'renders')
+              for frame, expected in checks.items():
+                  rel = m.get('frames', {}).get(frame)
+                  if not rel:
+                      continue
+                  p = os.path.join(base, rel) if not os.path.isabs(rel) else rel
+                  if os.path.exists(p):
+                      h = hashlib.sha256(open(p, 'rb').read()).hexdigest()[:16]
+                      if h != expected:
+                          bad.append(frame)
+                  else:
+                      bad.append(frame)
+              if bad:
+                  print(f'ERROR: checksum mismatch for frames: {bad}')
+                  sys.exit(1)
+              print(f'Checksum verification: {len(checks)} frames OK')
+          "
+
       - name: Store external response
         env:
           JOB_ID: ${{ inputs.job_id }}

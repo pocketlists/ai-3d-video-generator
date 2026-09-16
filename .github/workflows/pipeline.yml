@@ -502,6 +502,27 @@ jobs:
           pattern: pipeline-render-*
           path: /tmp/pipeline_artifacts/renders/
           merge-multiple: true
+      - name: Worker status report (truth)
+        run: |
+          python -c "
+          import json, os
+          renders = os.environ.get('ARTIFACT_DIR', '/tmp/pipeline_artifacts') + '/renders'
+          mf = os.path.join(renders, 'render_manifest.json')
+          if os.path.exists(mf):
+              with open(mf) as f:
+                  m = json.load(f)
+              statuses = m.get('worker_status', {})
+              completed = sum(1 for s in statuses.values() if str(s).startswith('success'))
+              failed = sum(1 for s in statuses.values() if s == 'error')
+              print(f'REQUESTED_WORKERS={m.get("requested_workers", "unknown")}')
+              print(f'ACTUAL_MATRIX_WORKERS={m.get("actual_workers", "unknown")}')
+              print(f'ACTIVE_WORKERS={len(statuses)}')
+              print(f'COMPLETED_WORKERS={completed}')
+              print(f'FAILED_WORKERS={failed}')
+              print(f'FRAMES: {m.get("actual_frames", "?")}/{m.get("expected_frames", "?")}')
+          else:
+              print('render_manifest.json not found')
+          "
       - run: python -m controller.orchestrator --stage quality_check
       - uses: actions/upload-artifact@v4
         with:
