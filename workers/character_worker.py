@@ -26,7 +26,7 @@ class CharacterWorker(BaseWorker):
         validator = AssetValidator()
         characters = []
 
-        for char_spec in manifest.get("characters", []):
+        for char_index, char_spec in enumerate(manifest.get("characters", []), start=1):
             name = char_spec["name"]
             prompt = char_spec.get("prompt", f"low-poly character: {name}")
 
@@ -39,6 +39,7 @@ class CharacterWorker(BaseWorker):
                 if validation["valid"]:
                     char_data = {
                         "name": name,
+                        "character_id": f"character_{char_index:03d}",
                         "asset_id": asset.asset_id,
                         "file_path": asset.file_path,
                         "format": asset.format,
@@ -53,10 +54,10 @@ class CharacterWorker(BaseWorker):
                                    f"({validation['mesh_count']} meshes, {validation['polygon_count']} polys)")
                 else:
                     self.logger.warning(f"Asset validation failed for {name}: {validation['issues']}")
-                    char_data = self._use_fallback(name)
+                    char_data = self._use_fallback(name, char_index)
             else:
                 self.logger.info(f"3D API not available, using fallback for: {name}")
-                char_data = self._use_fallback(name)
+                char_data = self._use_fallback(name, char_index)
 
             characters.append(char_data)
 
@@ -68,13 +69,14 @@ class CharacterWorker(BaseWorker):
             "api_used": any(c.get("source") == "3d_api" for c in characters),
         }
 
-    def _use_fallback(self, name: str) -> Dict:
+    def _use_fallback(self, name: str, char_index: int = 0) -> Dict:
         """Fallback to low_poly_generator when 3D API is unavailable."""
         from blender.low_poly_generator import LowPolyGenerator
         gen = LowPolyGenerator(seed=42)
         mesh = gen.generate_character(name)
         return {
             "name": name,
+            "character_id": f"character_{char_index:03d}" if char_index else None,
             "mesh": mesh.to_dict(),
             "vertex_count": mesh.vertex_count(),
             "face_count": mesh.face_count(),

@@ -33,6 +33,25 @@ class RenderWorker(BaseWorker):
         output_dir = os.path.join(artifact_dir, "renders", f"worker_{worker_id}")
         os.makedirs(output_dir, exist_ok=True)
 
+        def _write_worker_status(status, frames_rendered, elapsed_sec, error=None):
+            """Persist per-worker status for render_manifest.json (v6 worker truth)."""
+            import json as _json
+            import time as _time
+            _status = {
+                "worker_id": worker_id,
+                "status": status,
+                "frames_rendered": frames_rendered,
+                "elapsed_sec": elapsed_sec,
+                "attempt": int(os.environ.get("RENDER_ATTEMPT", "1") or "1"),
+                "started_at": started_at,
+                "ended_at": _time.time(),
+                "error": error,
+            }
+            with open(os.path.join(output_dir, "worker_status.json"), "w") as fh:
+                _json.dump(_status, fh, indent=2)
+
+        started_at = __import__("time").time()
+
         # Initialize CPU monitor
         monitor = CPUMonitor(worker_id=worker_id)
         self.logger.info(f"Worker {worker_id} system: {monitor.get_system_info()}")
@@ -57,6 +76,10 @@ class RenderWorker(BaseWorker):
             )
             collector.save()
 
+            _write_worker_status(
+                "success" if result.success else "error",
+                result.frames_rendered, result.elapsed_sec, result.error,
+            )
             return {
                 "status": "success" if result.success else "error",
                 "worker_id": worker_id,
@@ -88,6 +111,7 @@ class RenderWorker(BaseWorker):
                 int(resolution[0]), int(resolution[1]), monitor
             )
             summary = monitor.get_summary()
+            _write_worker_status("success_placeholder_test_mode", len(frames), None)
             return {
                 "status": "success",
                 "worker_id": worker_id,
