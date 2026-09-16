@@ -367,14 +367,51 @@ class RenderManager:
             except OSError:
                 frame_checksums[frame_num_str] = "UNREADABLE"
 
+        # v6 worker truth: read real per-worker status files (never fabricate)
+        worker_status = {}
+        worker_attempts = {}
+        timings = {}
+        for wdir in worker_dirs:
+            wid = f"worker_{wdir.name.split('_')[1]}"
+            status_file = wdir / "worker_status.json"
+            if status_file.exists():
+                try:
+                    import json as _json
+                    ws = _json.loads(status_file.read_text())
+                    worker_status[wid] = ws.get("status", "unknown")
+                    worker_attempts[wid] = ws.get("attempt", None)
+                    timings[wid] = ws.get("elapsed_sec", None)
+                except (ValueError, OSError):
+                    worker_status[wid] = "unknown"
+            else:
+                worker_status[wid] = "unknown"
+                worker_attempts[wid] = None
+                timings[wid] = None
+
+        requested_workers = None
+        try:
+            import os as _os
+            if _os.environ.get("NUM_WORKERS"):
+                requested_workers = int(_os.environ["NUM_WORKERS"])
+        except ValueError:
+            requested_workers = None
+
         manifest = {
             "job_id": job_id,
             "total_frames": total_frames,
             "workers": len(worker_dirs),
+            # v6 worker-count truth (aliases kept for backward compatibility)
+            "requested_workers": requested_workers,
+            "actual_workers": len(worker_dirs),
+            "expected_frames": total_frames,
+            "actual_frames": len(frame_map),
             "frames_found": len(frame_map),
             "frames": {str(k): v for k, v in sorted(frame_map.items())},
             "checksums": frame_checksums,
             "worker_ranges": worker_ranges,
+            "worker_status": worker_status,
+            "worker_attempts": worker_attempts,
+            "timings": timings,
             "duplicates": duplicates,
             "missing_frames": missing,
             "complete": len(missing) == 0 and len(duplicates) == 0,
