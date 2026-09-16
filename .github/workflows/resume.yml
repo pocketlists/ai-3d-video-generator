@@ -15,6 +15,13 @@ on:
       resume_token:
         description: 'Resume token from escalation message'
         required: true
+      original_run_id:
+        description: 'Original workflow run ID (for cross-run artifact download; optional — the failed stage re-generates its own artifacts)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
 
 env:
   ARTIFACT_DIR: /tmp/pipeline_artifacts
@@ -29,34 +36,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with:
+          python-version: '3.12'
       - run: pip install -r requirements.txt && mkdir -p $ARTIFACT_DIR $METRICS_DIR $STATE_DIR
 
-      - name: Download original pipeline artifacts
+      # Cross-run artifact download uses the SUPPORTED mechanism: run-id + github-token.
+      # Only runs when original_run_id is provided; never silently swallows failure.
+      - name: Download original pipeline artifacts (cross-run)
+        if: ${{ inputs.original_run_id != '' }}
         uses: actions/download-artifact@v4
         with:
           name: pipeline-${{ inputs.stage }}
           path: ${{ env.ARTIFACT_DIR }}
-        continue-on-error: true
+          run-id: ${{ inputs.original_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Store external response and resume
+      - name: Store external response
         env:
           JOB_ID: ${{ inputs.job_id }}
           STAGE: ${{ inputs.stage }}
           RESPONSE: ${{ inputs.response }}
           RESUME_TOKEN: ${{ inputs.resume_token }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
         run: |
           python -c "
           import json, os
-          # Store the external response
           response = os.environ['RESPONSE']
           stage = os.environ['STAGE']
           job_id = os.environ['JOB_ID']
           token = os.environ['RESUME_TOKEN']
 
-          # Write response file
           resp_path = os.path.join(os.environ['ARTIFACT_DIR'], 'external_response.json')
           with open(resp_path, 'w') as f:
               json.dump({'job_id': job_id, 'stage': stage, 'response': response,
@@ -65,7 +73,6 @@ jobs:
           print(f'Resume: job={job_id}, stage={stage}, token={token}')
           print(f'Response stored at: {resp_path}')
 
-          # Validate response is not empty
           if not response.strip():
               print('ERROR: Empty response')
               exit(1)
@@ -73,11 +80,16 @@ jobs:
 
       - name: Run resumed stage
         env:
+          STAGE: ${{ inputs.stage }}
+          JOB_ID: ${{ inputs.job_id }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          python -m controller.orchestrator --stage ${{ inputs.stage }}
+          python -m controller.orchestrator --stage "$STAGE"
 
       - uses: actions/upload-artifact@v4
-        with: 
+        with:
+          name: pipeline-${{ inputs.stage }}-resume-${{ inputs.job_id }}
+          path: /tmp/pipeline_artifacts/
+          retention-days: 7
