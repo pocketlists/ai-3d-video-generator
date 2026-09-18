@@ -55,7 +55,7 @@ class GeminiProvider(LLMProvider):
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self.api_key = config.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY", "")
-        self.model = config.get("gemini_model") or os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+        self.model = config.get("gemini_model") or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
     def is_available(self) -> bool:
         return bool(self.api_key)
