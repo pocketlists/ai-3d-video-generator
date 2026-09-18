@@ -186,11 +186,25 @@ def get_tts_provider(config: Dict[str, Any]) -> TTSProvider:
     """Factory: select TTS provider based on configuration.
 
     TTS_PROVIDER options:
+    - gemini_tts  → Gemini API TTS (models: gemini-2.5-flash-preview-tts,
+                   gemini-2.5-pro-preview-tts, gemini-3.1-flash-tts-preview;
+                   uses GEMINI_API_KEY — no separate credential)
     - google_cloud → Google Cloud Text-to-Speech (production, needs credentials)
     - google / gtts → gTTS (free, rate-limited — NOT Google Cloud TTS)
     - espeak → local espeak fallback
     """
     provider_name = config.get("tts_provider", "gtts")
+    if provider_name == "gemini_tts":
+        from providers.gemini_tts import GeminiTTSProvider
+        provider = GeminiTTSProvider(config)
+        if provider.is_available():
+            return provider
+        # DO NOT silently fall back when Gemini TTS was explicitly requested
+        raise RuntimeError(
+            "TTS_PROVIDER=gemini_tts but GEMINI_API_KEY is not set. "
+            "Gemini TTS uses the same key as planning — set GEMINI_API_KEY "
+            "or choose another TTS_PROVIDER."
+        )
     if provider_name == "google_cloud":
         from providers.google_cloud_tts import GoogleCloudTTSProvider
         provider = GoogleCloudTTSProvider(config)
