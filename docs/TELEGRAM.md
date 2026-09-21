@@ -42,3 +42,22 @@ Placeholder videos are never reported as success (RULE 15).
 Telegram can receive character/environment/prop previews, audio, clips,
 and the final video — with JOB_ID/TYPE/SHOT/VERSION captions. No useless
 temporary files are sent.
+
+
+## Channel ID Auto-Detection
+
+`TELEGRAM_CHANNEL_ID` is now OPTIONAL. If not set, the bot automatically
+detects the chat/channel ID from the first incoming message:
+
+1. Send any message to your bot on Telegram (or add it as admin to your
+   channel and post once).
+2. The chat ID from that update is captured (messages from
+   `TELEGRAM_ALLOWED_USER_IDS` users are preferred when several chats exist).
+3. The ID is persisted (STATE_DIR/telegram_chat_id.json) and reused for all
+   future sends — no re-detection needed.
+
+Priority: explicit `TELEGRAM_CHANNEL_ID` → previously detected ID →
+auto-detect via `getUpdates` → clear error with instructions.
+
+To switch to a different chat later, either update the secret or delete the
+persisted state file and message the bot again.

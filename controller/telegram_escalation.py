@@ -38,7 +38,9 @@ class TelegramEscalation:
         self.logger = PipelineLogger("escalation")
         self.bot_token = config.get("telegram_bot_token") or os.environ.get("TELEGRAM_BOT_TOKEN", "")
         self.channel_id = config.get("telegram_channel_id") or os.environ.get("TELEGRAM_CHANNEL_ID", "")
-        self.enabled = bool(self.bot_token and self.channel_id)
+        # channel_id is OPTIONAL — auto-detected from the bot's first message
+        # when not configured (see utils.telegram_client.resolve helpers).
+        self.enabled = bool(self.bot_token)
         self.allowed_user_ids = self._parse_allowed_users()
 
     def _parse_allowed_users(self) -> list:
@@ -46,6 +48,33 @@ class TelegramEscalation:
         if not raw:
             return []
         return [uid.strip() for uid in raw.split(",") if uid.strip()]
+
+    def _ensure_channel(self) -> None:
+        """Resolve channel_id lazily — auto-detect from first message if unset."""
+        if self.channel_id:
+            return
+        from utils.telegram_client import (
+            discover_channel_id, load_detected_chat_id, save_detected_chat_id,
+        )
+        detected = load_detected_chat_id()
+        if detected:
+            self.channel_id = detected
+            return
+        discovered = discover_channel_id(self.bot_token)
+        if discovered:
+            self.channel_id = discovered
+            save_detected_chat_id(discovered)
+            self.logger.info(
+                f"Auto-detected Telegram chat ID from first message: {discovered} "
+                f"(persisted; set TELEGRAM_CHANNEL_ID to override)"
+            )
+            return
+        # No chat available — escalate via logs only (resume token still valid)
+        raise RuntimeError(
+            "No Telegram chat/channel ID. Send any message to the bot once "
+            "(or add it as channel admin and post) so the ID can be "
+            "auto-detected, or set TELEGRAM_CHANNEL_ID."
+        )
 
     def escalate_failure(self, job_id: str, stage: str, error: str, provider: str = "",
                          context: str = "") -> Dict[str, Any]:
@@ -194,6 +223,7 @@ class TelegramEscalation:
         import urllib.request
         import urllib.error
 
+        self._ensure_channel()
         url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
         payload = json.dumps({"chat_id": self.channel_id, "text": text}).encode()
         req = urllib.request.Request(url, data=payload)

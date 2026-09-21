@@ -17,16 +17,34 @@ def test_telegram_client_missing_token():
 
 
 def test_telegram_client_missing_channel():
+    """Channel ID is auto-detected: init succeeds without it, but sending
+    fails with a clear error when nothing can be auto-detected."""
+    import tempfile
     old_t = os.environ.pop("TELEGRAM_BOT_TOKEN", None)
     old_c = os.environ.pop("TELEGRAM_CHANNEL_ID", None)
+    old_a = os.environ.pop("TELEGRAM_ALLOWED_USER_IDS", None)
+    old_state = os.environ.pop("STATE_DIR", None)
     try:
-        with pytest.raises(TelegramError):
-            TelegramClient(bot_token="test_token", channel_id="")
+        with tempfile.TemporaryDirectory() as td:
+            os.environ["STATE_DIR"] = td  # no persisted chat id
+            client = TelegramClient(bot_token="test_token", channel_id="")
+            assert client.channel_id == ""  # init OK — lazy resolution
+            from unittest import mock
+            with mock.patch("utils.telegram_client.discover_channel_id",
+                            return_value=None):
+                with pytest.raises(TelegramError, match="auto-detected"):
+                    client.send_message("hello")
     finally:
         if old_t:
             os.environ["TELEGRAM_BOT_TOKEN"] = old_t
         if old_c:
             os.environ["TELEGRAM_CHANNEL_ID"] = old_c
+        if old_a:
+            os.environ["TELEGRAM_ALLOWED_USER_IDS"] = old_a
+        if old_state:
+            os.environ["STATE_DIR"] = old_state
+        else:
+            os.environ.pop("STATE_DIR", None)
 
 
 def test_telegram_client_init():

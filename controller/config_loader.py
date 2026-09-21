@@ -20,12 +20,14 @@ class ConfigLoader:
     DEFAULT_CONFIG_PATH = Path(__file__).parent.parent / "config" / "default.yaml"
     BLENDER_CONFIG_PATH = Path(__file__).parent.parent / "config" / "blender_settings.yaml"
 
+    # TELEGRAM_CHANNEL_ID is optional: when unset, the bot auto-detects the
+    # chat/channel ID from the first incoming message.
     REQUIRED_SECRETS = [
         "TELEGRAM_BOT_TOKEN",
-        "TELEGRAM_CHANNEL_ID",
     ]
 
     OPTIONAL_SECRETS = [
+        "TELEGRAM_CHANNEL_ID",
         "OPENAI_API_KEY",
         "ELEVENLABS_API_KEY",
         "HF_TOKEN",

@@ -19,6 +19,84 @@ class TelegramError(Exception):
     """Raised when a Telegram API call fails."""
 
 
+def _chat_id_store_path() -> Path:
+    """Where the auto-detected chat/channel ID is persisted."""
+    state_dir = os.environ.get("STATE_DIR", "/tmp/pipeline_state")
+    return Path(state_dir) / "telegram_chat_id.json"
+
+
+def save_detected_chat_id(chat_id: str) -> None:
+    """Persist an auto-detected chat/channel ID for future runs."""
+    import json as _json
+    path = _chat_id_store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_json.dumps({"chat_id": str(chat_id)}))
+
+
+def load_detected_chat_id() -> Optional[str]:
+    """Load a previously auto-detected chat/channel ID (if any)."""
+    import json as _json
+    path = _chat_id_store_path()
+    if not path.exists():
+        return None
+    try:
+        return _json.loads(path.read_text()).get("chat_id") or None
+    except (ValueError, OSError):
+        return None
+
+
+def discover_channel_id(bot_token: str) -> Optional[str]:
+    """
+    Auto-detect the chat/channel ID from the bot's first incoming message.
+
+    The user simply messages the bot once (or adds it as admin to a channel
+    and posts). The chat ID from that update is captured — preference is
+    given to a chat started by an ALLOWED user (TELEGRAM_ALLOWED_USER_IDS)
+    when that list is configured.
+
+    Handles: message, channel_post, edited_message, edited_channel_post.
+    Returns the chat ID string, or None if no update is available.
+    """
+    import urllib.request
+    import urllib.error
+
+    url = f"https://api.telegram.org/bot{bot_token}/getUpdates?limit=50"
+    try:
+        with urllib.request.urlopen(url, timeout=30) as resp:
+            data = json.loads(resp.read().decode())
+    except (urllib.error.URLError, TimeoutError, ValueError):
+        return None
+    if not data.get("ok"):
+        return None
+
+    allowed = {
+        uid.strip() for uid in
+        os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "").split(",") if uid.strip()
+    }
+
+    candidates = []  # (from_allowed_user, chat_id)
+    for update in data.get("result", []):
+        for kind in ("message", "channel_post", "edited_message",
+                     "edited_channel_post"):
+            msg = update.get(kind)
+            if not msg:
+                continue
+            chat = msg.get("chat") or {}
+            chat_id = chat.get("id")
+            if chat_id is None:
+                continue
+            from_user = (msg.get("from") or {}).get("id")
+            # Author is optional (channels have no per-message author id)
+            from_allowed = str(from_user) in allowed if allowed else False
+            candidates.append((from_allowed, str(chat_id)))
+
+    if not candidates:
+        return None
+    # Prefer a chat involving an allowed user, else the first update seen
+    candidates.sort(key=lambda t: not t[0])
+    return candidates[0][1]
+
+
 class TelegramClient:
     """Telegram Bot API client for pipeline communication."""
 
@@ -30,8 +108,38 @@ class TelegramClient:
 
         if not self.bot_token:
             raise TelegramError("TELEGRAM_BOT_TOKEN is required")
-        if not self.channel_id:
-            raise TelegramError("TELEGRAM_CHANNEL_ID is required")
+        # channel_id is OPTIONAL: if not set, it is auto-detected from the
+        # bot's first incoming message (see _ensure_channel).
+
+    def _ensure_channel(self) -> None:
+        """Resolve the chat/channel ID, auto-detecting from the first message
+        when it was not configured explicitly.
+
+        Priority: explicit TELEGRAM_CHANNEL_ID → previously detected ID
+        (persisted) → discover via getUpdates → clear error.
+        """
+        if self.channel_id:
+            return
+        detected = load_detected_chat_id()
+        if detected:
+            self.channel_id = detected
+            logger.info("Using auto-detected Telegram chat ID: %s", detected)
+            return
+        discovered = discover_channel_id(self.bot_token)
+        if discovered:
+            self.channel_id = discovered
+            save_detected_chat_id(discovered)
+            logger.info(
+                "Auto-detected Telegram chat ID from first message: %s "
+                "(persisted; set TELEGRAM_CHANNEL_ID to override)", discovered,
+            )
+            return
+        raise TelegramError(
+            "No Telegram chat/channel ID configured. Either set "
+            "TELEGRAM_CHANNEL_ID, or simply send any message to your bot "
+            "once (or add it as admin to your channel and post) — the ID "
+            "will be auto-detected from that first message."
+        )
 
     def _make_request(self, method: str, data: Dict[str, Any],
                       files: Optional[Dict] = None) -> Dict:
@@ -80,6 +188,7 @@ class TelegramClient:
     @retry(max_attempts=3, initial_delay=2.0, retryable_messages=["timeout", "429", "502", "503"])
     def send_message(self, text: str, parse_mode: str = "Markdown") -> Dict:
         """Send a text message to the configured channel."""
+        self._ensure_channel()
         return self._make_request("sendMessage", {
             "chat_id": self.channel_id,
             "text": text,
@@ -89,6 +198,7 @@ class TelegramClient:
     @retry(max_attempts=3, initial_delay=2.0, retryable_messages=["timeout", "429", "502"])
     def send_photo(self, photo_path: str, caption: str = "") -> Dict:
         """Send a photo to the channel."""
+        self._ensure_channel()
         with open(photo_path, "rb") as f:
             filedata = f.read()
         return self._make_request("sendPhoto", {
@@ -99,6 +209,7 @@ class TelegramClient:
     @retry(max_attempts=3, initial_delay=2.0, retryable_messages=["timeout", "429", "502"])
     def send_document(self, file_path: str, caption: str = "") -> Dict:
         """Send a document/file to the channel."""
+        self._ensure_channel()
         with open(file_path, "rb") as f:
             filedata = f.read()
         return self._make_request("sendDocument", {
@@ -111,6 +222,7 @@ class TelegramClient:
                    duration: Optional[int] = None, width: Optional[int] = None,
                    height: Optional[int] = None) -> Dict:
         """Send a video to the channel."""
+        self._ensure_channel()
         with open(video_path, "rb") as f:
             filedata = f.read()
         data = {"chat_id": self.channel_id, "caption": caption}
