@@ -82,29 +82,66 @@ class LocalStateStore(StateStore):
                     return json.load(f)
             except (json.JSONDecodeError, IOError):
                 return None
-        # v9: CI fallback — fresh runner: state was downloaded with the
-        # artifact (ARTIFACT_DIR/state/). Try the exact job file first,
-        # then a single/newest state file (one pipeline per artifact set).
+        # v9.1: CI fallback — fresh runner: state was downloaded with the
+        # artifact (ARTIFACT_DIR/state/). Parallel jobs each upload their own
+        # state file, so MERGE all of them: union of stages (latest timestamp
+        # per stage wins), errors deduplicated, metrics/artifacts newest-wins.
         art = os.environ.get("ARTIFACT_DIR") if os.environ.get("GITHUB_ACTIONS") == "true" else None
         if not art:
             return None
         art_state = Path(art) / "state"
-        exact = art_state / f"{job_id}.json"
-        if exact.exists():
+        if not art_state.exists():
+            return None
+        states = []
+        for p in sorted(art_state.glob("*.json"), key=lambda p: p.stat().st_mtime):
             try:
-                with open(exact, "r") as f:
-                    return json.load(f)
+                with open(p, "r") as f:
+                    states.append(json.load(f))
             except (json.JSONDecodeError, IOError):
-                return None
-        candidates = [p for p in art_state.glob("*.json")] if art_state.exists() else []
-        if not candidates:
+                continue
+        return self._merge_states(states)
+
+    @staticmethod
+    def _merge_states(states):
+        """Merge parallel-job state files into one (v9.1).
+
+        Each parallel job extends the shared base state with its own stage.
+        Merging unions the stages — per stage, the entry with the LATEST
+        timestamp wins (so a later 'failed' correctly overrides an earlier
+        'completed', and vice versa). Errors are deduplicated;
+        metrics/artifacts update in file-mtime order (newest wins).
+        """
+        if not states:
             return None
-        newest = max(candidates, key=lambda p: p.stat().st_mtime)
-        try:
-            with open(newest, "r") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            return None
+        if len(states) == 1:
+            return states[0]
+        merged = dict(states[0])  # oldest file: base identity (job_id etc.)
+        all_stages = {}
+        for st in states:
+            for stage_name, info in (st.get("stages") or {}).items():
+                prev = all_stages.get(stage_name)
+                ts_new = (info or {}).get("timestamp", 0)
+                ts_old = (prev or {}).get("timestamp", 0)
+                if prev is None or ts_new >= ts_old:
+                    all_stages[stage_name] = info
+        merged["stages"] = all_stages
+        errors = []
+        seen = set()
+        for st in states:
+            for err in (st.get("errors") or []):
+                key = (err.get("stage"), err.get("error"), err.get("timestamp"))
+                if key not in seen:
+                    seen.add(key)
+                    errors.append(err)
+        merged["errors"] = errors
+        metrics = dict(merged.get("metrics") or {})
+        artifacts = dict(merged.get("artifacts") or {})
+        for st in states[1:]:
+            metrics.update(st.get("metrics") or {})
+            artifacts.update(st.get("artifacts") or {})
+        merged["metrics"] = metrics
+        merged["artifacts"] = artifacts
+        return merged
 
     def list_jobs(self) -> list:
         return [f.stem for f in self.base_dir.glob("*.json") if f.is_file()]
