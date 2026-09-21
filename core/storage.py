@@ -66,10 +66,17 @@ class LocalStateStore(StateStore):
             try:
                 art_state = Path(art) / "state"
                 art_state.mkdir(parents=True, exist_ok=True)
-                atmp = art_state / f"{job_id}.json.tmp"
+                # v9.2: UNIQUE filename per parallel job (GITHUB_JOB = the
+                # workflow job key, e.g. characters / environments / props).
+                # Without this, parallel jobs' state files share ONE name and
+                # overwrite each other when a consumer downloads multiple
+                # artifacts — losing all but the last job's stage.
+                gh_job = os.environ.get("GITHUB_JOB", "")
+                fname = f"{job_id}_{gh_job}.json" if gh_job else f"{job_id}.json"
+                atmp = art_state / (fname + ".tmp")
                 with open(atmp, "w") as f:
                     json.dump(state, f, indent=2)
-                os.replace(str(atmp), str(art_state / f"{job_id}.json"))
+                os.replace(str(atmp), str(art_state / fname))
             except OSError:
                 pass
         return str(path)
