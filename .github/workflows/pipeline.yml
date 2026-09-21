@@ -53,6 +53,21 @@ jobs:
                   'created_at': time.time(), 'status': 'RECEIVED'}
           with open(os.environ['ARTIFACT_DIR'] + '/request.json', 'w') as f:
               json.dump(data, f, indent=2)
+          # v9: initial pipeline state — marks receive_request complete so the
+          # next job's orchestrator dependency check passes on a fresh runner.
+          # Travelled through the artifact (ARTIFACT_DIR/state/) and restored
+          # by LocalStateStore's CI fallback.
+          state = {'job_id': job_id, 'created_at': time.time(),
+                   'current_state': 'RECEIVED',
+                   'stages': {'receive_request': {'status': 'completed',
+                                                  'timestamp': time.time(),
+                                                  'data': {}}},
+                   'artifacts': {}, 'errors': [], 'metrics': {},
+                   'pending_escalations': []}
+          state_dir = os.environ['ARTIFACT_DIR'] + '/state'
+          os.makedirs(state_dir, exist_ok=True)
+          with open(state_dir + '/' + job_id + '.json', 'w') as f:
+              json.dump(state, f, indent=2)
           print(f'::notice::Job ID: {job_id}')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f'job_id={job_id}\n')

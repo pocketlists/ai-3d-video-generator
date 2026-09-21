@@ -57,14 +57,51 @@ class LocalStateStore(StateStore):
             f.flush()
             os.fsync(f.fileno())
         os.rename(str(tmp), str(path))
+        # v9: CI carry-over — only under GitHub Actions (GITHUB_ACTIONS=true),
+        # mirror the state into the artifact directory so it rides along with
+        # upload-artifact and survives to the next job's fresh runner.
+        # Best-effort: the base_dir write above is the source of truth.
+        art = os.environ.get("ARTIFACT_DIR") if os.environ.get("GITHUB_ACTIONS") == "true" else None
+        if art:
+            try:
+                art_state = Path(art) / "state"
+                art_state.mkdir(parents=True, exist_ok=True)
+                atmp = art_state / f"{job_id}.json.tmp"
+                with open(atmp, "w") as f:
+                    json.dump(state, f, indent=2)
+                os.replace(str(atmp), str(art_state / f"{job_id}.json"))
+            except OSError:
+                pass
         return str(path)
 
     def load_state(self, job_id: str) -> Optional[Dict[str, Any]]:
         path = self.base_dir / f"{job_id}.json"
-        if not path.exists():
+        if path.exists():
+            try:
+                with open(path, "r") as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, IOError):
+                return None
+        # v9: CI fallback — fresh runner: state was downloaded with the
+        # artifact (ARTIFACT_DIR/state/). Try the exact job file first,
+        # then a single/newest state file (one pipeline per artifact set).
+        art = os.environ.get("ARTIFACT_DIR") if os.environ.get("GITHUB_ACTIONS") == "true" else None
+        if not art:
             return None
+        art_state = Path(art) / "state"
+        exact = art_state / f"{job_id}.json"
+        if exact.exists():
+            try:
+                with open(exact, "r") as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, IOError):
+                return None
+        candidates = [p for p in art_state.glob("*.json")] if art_state.exists() else []
+        if not candidates:
+            return None
+        newest = max(candidates, key=lambda p: p.stat().st_mtime)
         try:
-            with open(path, "r") as f:
+            with open(newest, "r") as f:
                 return json.load(f)
         except (json.JSONDecodeError, IOError):
             return None

@@ -99,6 +99,17 @@ class StateManager:
             loaded = self.store.load_state(self.job_id)
             if loaded:
                 self._state = loaded
+                # v9: normalize — a loaded state (e.g. minimal CI artifact
+                # state) may be missing optional keys; fill them defensively
+                # instead of crashing later with KeyError.
+                self._state.setdefault("job_id", self.job_id)
+                self._state.setdefault("created_at", time.time())
+                self._state.setdefault("current_state", "RECEIVED")
+                self._state.setdefault("stages", {})
+                self._state.setdefault("artifacts", {})
+                self._state.setdefault("errors", [])
+                self._state.setdefault("metrics", {})
+                self._state.setdefault("pending_escalations", [])
                 self.logger.info(f"Loaded existing state for job: {self.job_id}")
 
     def transition(self, new_state: str) -> bool:
